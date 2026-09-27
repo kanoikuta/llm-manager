@@ -1,0 +1,13 @@
+# 统一换行符，避免不同机器 checkout 出不同结果。
+# 项目约定（见 AGENTS.md 第二节）：ui.html = LF，model_manager.py = CRLF。
+# Windows 的 cmd / PowerShell 对 CRLF 最稳，所以脚本一律 CRLF。
+* text=auto eol=lf
+model_manager.py text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制，别做任何转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.gguf binary

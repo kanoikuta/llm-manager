@@ -1,0 +1,22 @@
+{
+  "_说明": [
+    "模板：复制成 config.json 再改。config.json 在 .gitignore 里，不会被提交。",
+    "不复制也能跑 —— 管理器会自动生成一把随机 API key 写进 config.json。",
+    "所有字段都能省，省了就走默认值。改完重启管理器生效。",
+    "",
+    "api_key         API 密钥。留空 = 首次运行自动随机生成（推荐）",
+    "engine          llama-server.exe 路径。留空 = 管理器上一级的 bin\\",
+    "chat_template   聊天模板 .jinja 路径。留空 = 上一级的 templates\\Qwen-Fixed-Chat-Templates\\",
+    "lan_hostname    手机访问用的 mDNS 名（需要 Bonjour）。留空 = localhost",
+    "model_dirs      模型目录数组，会递归扫 *.gguf。留空 = 管理器同级的 models\\",
+    "presets         固定排在列表最前的模型；每项至少要有 id 和 file 两个字段",
+    "default_id      没指定时默认加载哪个 preset 的 id。留空 = presets 里的第一个"
+  ],
+  "api_key": "",
+  "engine": "",
+  "chat_template": "",
+  "lan_hostname": "llama.local",
+  "model_dirs": [],
+  "presets": [],
+  "default_id": ""
+}

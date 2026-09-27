@@ -1,0 +1,1722 @@
+<!-- UI_VER: 0.3.31 -->
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1a1a1c">
+<title>模型管理器</title>
+<style>
+/* ── 设计变量 ───────────────────────────────────────────────
+   参考 简约ui参考.png：分段药丸控件、细线图标、大留白、轻字重。
+   底色是**中性灰黑**，整套变量里没有任何蓝色调 —— 颜色只留给状态点和曲线。
+   圆角统一成一个 --r（用户 2026-09-20 要求「尽量统一圆角」）：
+   卡片、按钮、输入框、模型卡、分段槽、弹层全用它，只有药丸形的槽例外。 */
+:root{
+  color-scheme:dark;
+  /* 底色整体压深了一档（#1a1a1c -> #111113）：原来卡片只比背景亮一级，
+     卡片是「浮」不起来的。现在背景/卡片/槽三层分别是 #111113 / #1c1c1f / #151517，
+     明度差拉够，层次不靠描边也能看出来。 */
+  --bg:#111113;
+  --card:#1c1c1f;
+  --card2:#232327;     /* 卡片里再抬一层。v0.3.04 起暂时没人用（唯一的使用者统计条删了），
+                          留着是因为它就是「卡片里还有一层」这档色，别当垃圾删 */
+  --track:#2a2a2e;     /* 分段槽 / 暂停那一排的底 */
+  --on:#111113;        /* 分段里「已选中」那颗 —— 比槽更深 */
+  --inset:#151517;     /* 卡片**内部**的「槽」（曲线底、输入框、列表） */
+  --line:rgba(255,255,255,.06);
+  --line2:rgba(255,255,255,.12);
+  --tx:#f5f5f7;
+  /* 次级/三级文字 2026-09-20 调亮过：原来 #98989f / #636366 在卡片底(#262628)上
+     对比度只有 4.96:1 / 2.49:1，三级那档连 WCAG AA 的 4.5:1 都不到 ——
+     占位符、版本号、「最高 366 W」全是它，手机上基本看不清。
+     现在 6.4:1 / 4.4:1，层次还在，但都读得出来。 */
+  --tx2:#a8a8b0;
+  --tx3:#8a8a90;
+  --pill:#f5f5f7;      /* 主按钮 = 近白药丸（照参考图） */
+  --pillTx:#131315;
+  --green:#32d74b; --red:#ff453a; --amber:#ff9f0a;
+  --blue:#0a84ff; --purple:#bf8bff;
+  /* 圆角从「一个 --r 打天下」改成**三级**（用户 2026-09-20 放开了这条限制）：
+     原来卡片、按钮、输入框、槽全是 14px，什么都是同一个弧度，反而没有层次。
+       --r-lg   外层容器：卡片 / 内容框 / 弹层顶
+       --r      控件：按钮 / 输入框
+       --r-sm   卡片**内部**的小块：曲线槽、统计条、小按钮
+       --r-pill 分段槽（照参考图那个药丸）
+     `--well` 留成 --r-sm 的别名 —— 老代码里引了几十处，不用挨个改。 */
+  --r-lg:22px; --r:16px; --r-sm:11px; --r-pill:999px;
+  --well:var(--r-sm);
+  /* 卡片「抬起来」的两件套：1px 内高光 + 一层很轻的投影。
+     深色底上纯靠明度差的卡片看着是「贴」在背景上的，加这道高光才有材质感。
+     投影故意压得很轻 —— 深色背景上投影本来就几乎看不见，重了反而脏。 */
+  --hl:inset 0 1px 0 rgba(255,255,255,.055);
+  --sh:0 1px 2px rgba(0,0,0,.45),0 12px 30px -16px rgba(0,0,0,.75);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{
+  color-scheme:dark;
+  /* ── 双击缩放关掉 ──────────────────────────────────────────
+     这是「点输入框页面会放大」的**第二个**原因（第一个是字号 <16px，见下面表单那节）。
+     手指在输入框上点两下，Safari / Chrome 都会把整页放大 —— 而点输入框常常是连点。
+     manipulation = 保留双指捏合、只去掉双击那一下，所以不牺牲可访问性。
+     touch-action 本身不继承，但浏览器算的是**祖先链的交集**，挂在 html 上就能盖住全页。 */
+  touch-action:manipulation;
+  -webkit-text-size-adjust:100%;   /* 放 html 上 —— 只放 body 挡不住 iOS 的文字自动放大 */
+}
+body{
+  margin:0;color:var(--tx);background:var(--bg);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","Microsoft YaHei",sans-serif;
+  /* 左右也留安全区：横屏时刘海/圆角会啃掉边上那几像素 */
+  padding:calc(12px + env(safe-area-inset-top))
+          calc(14px + env(safe-area-inset-right))
+          calc(220px + env(safe-area-inset-bottom))
+          calc(14px + env(safe-area-inset-left));
+  -webkit-text-size-adjust:100%;
+  -webkit-font-smoothing:antialiased;   /* 深色底上细字不描边、不发糊 */
+}
+/* 焦点圈只给键盘和外接鼠标 —— :focus-visible 在「手指点出来的焦点」上不生效，
+   所以加了它不会让手机上每次点按钮都闪一圈白边。 */
+:focus-visible{outline:2px solid #9a9aa1;outline-offset:2px}
+/* ⚠ 所有内联 SVG 图标都靠这条上色。
+   不写的话 <symbol> 里的形状没有 fill 属性 → 默认是**黑色**，
+   在深色按钮上就是一团看不见的黑（2026-09-20 用户报的「按钮里是黑色看不清」）。
+   注意 stroke 型的图标自己写了 fill="none"，那是表现属性，
+   优先级高于继承值，所以不会被这条覆盖。 */
+svg{fill:currentColor}
+
+/* ── 顶部 ──
+   `.top` / `.ttl`（「模型管理器」大标题）v0.3.05 删了 —— 标题和版本号一起挪进「更多」，
+   页面上第一块就是状态卡。`.ver` 那颗版本号小胶囊留着，现在长在「更多」底部那行。 */
+.ver{font-size:11px;color:var(--tx3);font-weight:400;margin-left:8px;vertical-align:2px;
+  background:rgba(255,255,255,.06);border-radius:7px;padding:2px 7px;letter-spacing:0}
+/* `.sub` 是出错时才冒出来的那行黄字（`setSub()` 挂 `.on`）。
+   **上边距从 -8px 改成 0** —— 原来那个负值是抵掉标题 `.top` 的 padding-bottom，
+   标题没了之后它会把黄字往上顶出安全区。 */
+.sub{display:none;color:var(--amber);font-size:12.5px;margin:0 2px 12px;line-height:1.5}
+.sub.on{display:block}
+
+.card{background:var(--card);border-radius:var(--r-lg);padding:16px;margin-bottom:12px;
+  box-shadow:var(--hl),var(--sh)}
+
+/* ── 状态卡：模型名（点开=选模型）+ 卸载/加载 ─────────────── */
+.mrow{display:flex;align-items:center;gap:8px}
+.mname{flex:1;min-width:0;display:flex;align-items:center;gap:11px;text-align:left;
+  background:none;color:var(--tx);padding:0;border-radius:var(--r)}
+.mname:active{transform:none;opacity:.6}
+.mname .stxt{flex:1;min-width:0;display:block}
+.chev2{width:15px;height:15px;flex:0 0 auto;color:var(--tx3)}
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:#555}
+.dot.ready{background:var(--green);box-shadow:0 0 10px rgba(48,209,88,.6)}
+.dot.loading,.dot.stopping{background:var(--amber);animation:p 1s infinite}
+.dot.error{background:var(--red)}
+.dot.idle{background:#4a4a4d}
+@keyframes p{50%{opacity:.25}}
+/* 15.5px（用户 2026-09-20 反馈整张状态卡的字偏大，点名要缩模型名和统计数字）。
+   历史上限是 17px —— 再大「NVFP4-v2-imx-v6-froggeric」这种长名字就会被省略号截掉
+   （试过 18.5px，实测截断），所以这条只会往下调，往上加之前先拿真名字量一遍。 */
+.big{display:block;font-size:15.5px;font-weight:600;letter-spacing:-.1px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.big.err{color:#ff8b83}
+.meta{display:block;color:var(--tx2);font-size:12.5px;margin-top:2px;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.load-ring{position:relative;display:grid;place-items:center;width:28px;height:28px;flex:0 0 28px;
+  border-radius:50%;background:conic-gradient(from -90deg,var(--blue) var(--pct),#48484d var(--pct))}
+.load-ring::before{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--card)}
+.load-ring svg{position:relative;width:13px;height:16px;color:var(--blue)}
+
+/* `.stats` / `.st` 那一整套（t/s · 命中 · 记录 三格统计条）v0.3.04 删掉了 ——
+   用户 2026-09-21 要求「三个一起删除」，入口挪到「更多 → 记录」。
+   别照着历史版本抄回来：那三格现在在记录弹层里，而且那边是全量列表。 */
+
+/* ── 按钮 ── */
+/* min-height:44px = iOS 的手指最小命中尺寸。原来全靠 padding 撑（约 36px），
+   手机上点「卸载」这种边缘按钮经常点空。touch-action 顺手去掉双击缩放那 300ms 等待。 */
+button{border:0;border-radius:var(--r);padding:11px 16px;font-size:15px;font-weight:500;
+  background:var(--pill);color:var(--pillTx);cursor:pointer;font-family:inherit;
+  min-height:44px;touch-action:manipulation;
+  transition:transform .12s ease,opacity .12s ease}
+button:active{transform:scale(.96)}
+button.gray{background:var(--track);color:var(--tx)}
+button.red{background:rgba(255,69,58,.16);color:#ff8b83}
+button.amber{background:rgba(255,159,10,.16);color:#ffc46b}
+button:disabled{opacity:.32}
+.sm{padding:0 14px;height:40px;min-height:40px;font-size:13px;border-radius:var(--r)}
+.row{display:flex;gap:8px;margin-bottom:10px}
+.row button{flex:1}
+
+/* ── 操作槽（暂停 / 睡眠 / 记录 / 更多）───────────────────────
+   定义必须放在 button.gray **之后** —— 同优先级下后者胜。 */
+/* 圆角跟「监控」那个分段槽一致（用户 2026-09-20 要求）：整条是药丸，里面四格也是药丸。
+   原来这里给的是 --r-lg(22px)、分段槽是 --r-pill，两条并排看着不是一套。 */
+.dock{position:fixed;left:calc(20.33px + env(safe-area-inset-left));right:calc(20.33px + env(safe-area-inset-right));bottom:21.33px;z-index:10;width:auto;max-width:620px;margin:0 auto;padding:8px 0 0;background:linear-gradient(to bottom,rgba(17,17,19,0),var(--bg) 18%)}
+.dock .card{padding:2px 12px;margin-bottom:10px}
+.acts{display:flex;background:var(--card);border-radius:999px;padding:4px 0;margin:0}
+/* Apple Music 原图栏宽由 (1144-60)/3=361.33px 得出。预览坐标 x=130/51/130
+   显示外沿落在 x≈130，内容中心 x≈51；维持中心、两侧各扩 7.67px，修正到目标宽。
+   原图上下切点 y=2487/2558，预览 y=2409/2487/2566，向下边缘约偏 8px，顶部偏 3px；
+   修正外框高度到 61.33px。 */
+.acts>button{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:none;color:var(--tx);border-radius:var(--r-pill);padding:0 2px;
+  min-height:61.33px;font-size:8.33px;line-height:1.2;font-weight:500}
+.acts>button:active{background:rgba(255,255,255,.13);transform:none}
+.acts>button.red{background:none;color:#ff7b72}
+.acts>button.on{background:none;color:var(--amber)}
+.acts .ic{width:22px;height:22px;flex:0 0 auto}
+#btnPause .i-play{display:none}
+#btnPause.on .i-pause{display:none}
+#btnPause.on .i-play{display:block}
+
+/* ── 监控标题与摘要 ──
+   和上面那排操作**同一个底色**，但**单独一个框**；下面的内容
+   又是另一个框 —— 用户明确要求「不和上一行的按钮页等在一个框内」。 */
+/* 分段槽做成**全圆药丸** —— 参考图里就是这个形状，比原来的圆角矩形更贴。 */
+.trackbox{display:flex;align-items:center;gap:10px;background:var(--track);
+  border-radius:var(--r-pill);padding:5px;margin-bottom:12px}
+.tab{background:none;color:var(--tx2);padding:9px 18px;font-size:13.5px;font-weight:600;
+  min-height:40px;border-radius:var(--r-pill)}
+.tab:active{transform:none}
+/* 选中那颗加一点投影 —— 参考图里「选中 = 浮起来一颗」，光靠更深一档的底色不够 */
+.tab.on{background:var(--on);color:var(--tx);box-shadow:0 1px 3px rgba(0,0,0,.45)}
+/* `.panesum` / `.pseg`（监控栏右边那行摘要）v0.3.30 跟着那条栏一起删了。
+   **别照着旧版本抄回来**：它显示的是显存 / 温度 / 功耗，而每个数曲线表头里都有，纯重复。
+   当年为它定过一条规矩（摘要里一个间隔符号都不拼 ——「·」在中文回退字体里会渲染成
+   一小坨灰块，看着像脏点；间距靠 `.pseg+.pseg` 的 margin），现在整套都用不上了。 */
+.pane{background:var(--card);border-radius:var(--r-lg);padding:16px;margin-bottom:12px;
+  box-shadow:var(--hl),var(--sh)}
+.panehint{color:var(--tx3);font-size:12.5px;text-align:center;padding:22px 0}
+
+/* ── 曲线 ── */
+.rc{margin-bottom:14px}
+.rch{display:flex;justify-content:space-between;align-items:baseline;
+  font-size:12.5px;margin-bottom:6px}
+.rch span{color:var(--tx2)}
+.rch .lab{display:flex;align-items:center;align-self:center}  /* 左边：小色点 + 名称 */
+.rch .rv{text-align:right}
+/* 读数统一成 12.5px。用户 2026-09-20 反馈：本值那串「29.3 / 61.7 GB · 47%」
+   原来给到 15.5px 太抢，而旁边的「最高 366 W」才 11.5px，一行里两种字号看着不齐 ——
+   现在**四个数一样大**，层级改由颜色和字重去分：本值 500/本色，「最高」400/灰。 */
+.rch b{font-weight:500;font-size:12.5px;font-variant-numeric:tabular-nums}
+.rch b.dim{font-weight:400;font-size:12.5px;margin-left:8px}
+/* 每条曲线前面一颗本色小点，一眼对得上哪条线是哪条 */
+.cdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;margin-right:7px;display:block}
+/* 曲线坐在一块比卡片更深一点的「槽」里 —— 渐变填充压在槽底上才有厚度，
+   直接画在卡片上整条曲线是飘着的（2026-09-20 美化）。
+   槽留 8px 内边距：折线末端那颗圆点正好画在 canvas 右边缘，不留白会被圆角啃掉一半。 */
+.well{background:var(--inset);border-radius:var(--well);padding:8px 9px}
+
+/* ── 表单控件 ─────────────────────────────────────────────
+   ⚠ font-size 必须 ≥16px，**包括 textarea**：iOS Safari 对聚焦时字号小于 16px 的
+   输入框会把整页放大（不是放大控件，是缩放整个页面，还会横向错位）。
+   2026-09-20 用户报「点输入框界面自动放大」就是这条 —— 当时 textarea 单独写了
+   font-size:15px（「系统提示词」那个多行框），全页只有它一个踩线。
+   **改这里之前先数一遍：任何一条把字号压到 16 以下的规则都会重新引爆这个 bug。**
+
+   ⚠ **光改到 16px 还不够**（改完用户实测：放大变轻了但没消失）。所以这里是三保险：
+     ① 字号给 **17px** 而不是 16 —— 阈值是「<16 才放大」，16 正好压在线上，
+        不同机型/字体渲染出来会差一点点，留 1px 余量；
+     ② `touch-action:manipulation`（html 上那条盖全页）干掉**双击**缩放 ——
+        点输入框常常是连点两下，Safari/Chrome 都会把整页放大；
+     ③ 聚焦期间用 JS 把 viewport 的 maximum-scale 锁成 1，失焦放开（见页面末尾）。
+   select 不设 appearance:none —— 保留系统外观，点开就是 Safari 原生的选择器
+   （配合 html 上的 color-scheme:dark，那个选择器也是暗色的）。 */
+input,select,textarea{border:1px solid var(--line2);background:var(--inset);color:var(--tx);
+  border-radius:var(--r);padding:12px;font-size:17px;width:100%;font-family:inherit;
+  touch-action:manipulation}
+textarea{resize:vertical;line-height:1.6}
+input::placeholder,textarea::placeholder{color:var(--tx3)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#8a8a90}
+/* 文本控件在 :focus-visible 里是「永远匹配」的（规范把可键盘输入的控件都算作键盘交互），
+   手指点进去也会亮一圈，很丑 —— 所以把输入框排除，焦点反馈只靠上面那条边框变色。 */
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none}
+
+/* ── 搜索 ── */
+.searchbar{display:flex;align-items:center;gap:9px;padding:10px 13px;margin-bottom:10px;
+  border-radius:var(--r);background:var(--inset);border:1px solid var(--line)}
+.searchbar .sic{width:16px;height:16px;color:var(--tx3);flex:0 0 auto;
+  fill:none;stroke:currentColor;stroke-width:2}
+.searchbar input{border:0;background:none;padding:0;border-radius:0;font-size:17px}
+.searchbar input:focus{border:0}
+
+/* ── 模型页：完整模型名 + 只留一颗白色「修改参数」 ────────── */
+.mdl{padding:13px 0;border-bottom:1px solid var(--line)}
+.mdl:first-child{padding-top:0}
+.mdl:last-child{border-bottom:0;padding-bottom:0}
+/* 完整名字，**不截断**（用户要求）—— 长名字换行显示 */
+.mdln{font-weight:600;font-size:14.5px;line-height:1.45;word-break:break-word}
+.mdl.cur .mdln{color:var(--green)}
+.mdlb{display:flex;align-items:center;gap:10px;margin-top:7px}
+.mdlnt{flex:1;min-width:0;color:var(--tx2);font-size:12px;line-height:1.5;word-break:break-word}
+/* 每行那颗「修改参数」压小一档：原来 15px 白药丸一行一颗、六行排下来
+   整页全是白块，主次全糊了。白底保留（用户要求），只是不再是视觉主角。 */
+.mdlb button{flex:0 0 auto;min-height:40px;padding:0 15px;font-size:13.5px}
+.au{display:inline-block;background:rgba(255,255,255,.09);color:var(--tx2);border-radius:6px;
+  padding:1px 6px;font-size:11.5px;font-weight:500;margin-right:6px;vertical-align:1px}
+.tag{display:inline-block;background:rgba(255,255,255,.09);color:var(--tx2);border-radius:6px;
+  padding:1px 6px;font-size:11px;margin-left:6px;vertical-align:1px}
+/* 三个标签**三种颜色**（用户 2026-09-26：「不同小标签不要同色」）——
+   原来「未实测」和「视觉」都是 .tag.y，一排看下来分不清哪个是哪个：
+     未实测 = 琥珀（.y，这是个**告警**：没实测过）
+     视觉   = 绿（.g，这是个**能力**：挂了 mmproj，能看图）
+     MoE    = 紫（.p，这是**模型类型**，不是好坏；紫色取内存那条曲线的 #bf8bff）
+   加新标签就再挑一档不同的色，别顺手抄上面那三个。 */
+.tag.g{background:rgba(48,209,88,.16);color:#5fd98a}
+.tag.y{background:rgba(255,159,10,.16);color:#e0b95f}
+.tag.p{background:rgba(191,139,255,.16);color:#c9a6ff}
+.warn{color:#e0b95f;font-size:12px;margin-top:6px;line-height:1.5}
+.hint{color:var(--tx2);font-size:12px;margin-top:8px;line-height:1.7}
+.hint code{background:var(--inset);padding:1px 6px;border-radius:6px;color:var(--tx);
+  font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+pre{background:var(--inset);border-radius:var(--r);padding:11px;font-size:11px;line-height:1.55;
+  color:var(--tx2);overflow:auto;max-height:210px;margin:14px 0 0;white-space:pre-wrap;
+  word-break:break-all;font-family:ui-monospace,Consolas,monospace}
+.callout{background:rgba(255,159,10,.09);border-radius:var(--r);padding:11px 13px;margin-top:14px}
+
+/* ── 底部弹层 ── */
+.modal{position:fixed;inset:0;z-index:20;display:none;align-items:flex-end;justify-content:center;
+  background:rgba(0,0,0,.6);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+/* 确认弹层要压在别的弹层上面（比如「更多」里点卸载） */
+#ask{z-index:30}
+/* 「更多」的第二层：压在「更多」上面（20），但确认框还得压得住它（30）。
+   日志打开时**不关「更多」**，关掉就又回到「更多」。
+   `#perf`（记录）v0.3.05 起不在这条里了 —— 它的入口挪到了操作槽，
+   不再从「更多」里面打开，用默认的 20 就行。 */
+#logs{z-index:25}
+.sheet{background:#1f1f22;width:100%;max-width:520px;max-height:88vh;overflow:auto;
+  border-radius:var(--r-lg) var(--r-lg) 0 0;padding:10px 16px calc(20px + env(safe-area-inset-bottom));
+  box-shadow:var(--hl),0 -18px 44px rgba(0,0,0,.6)}
+.grab{width:38px;height:4px;border-radius:2px;background:var(--line2);margin:0 auto 16px}
+.sh-t{font-weight:600;font-size:17px;margin-bottom:16px;letter-spacing:.1px}
+.sheet>button{width:100%;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:9px}
+.sheet>button svg{width:18px;height:18px;flex:0 0 auto}
+.sheet .row{margin:14px 0 0}
+.sheet .row button{width:auto}
+.sep{height:1px;background:var(--line);margin:18px 0}
+/* 完整 API Key 那一行：整块可换行，别让 43 个十六进制字符顶出屏幕 */
+.keyline{margin:6px 0 0}
+.keyline code{display:block;background:var(--inset);padding:8px 10px;border-radius:var(--r-sm);
+  color:var(--tx);font-family:ui-monospace,Consolas,monospace;font-size:11.5px;
+  word-break:break-all;line-height:1.5}
+/* 日志段头：「标签 + 右侧一颗看全文/看摘要」。观感沿用 .hint（灰、12px），
+   上下外边距由各自的 style 给（第一段要抵掉标题的 margin，第二段要拉开）。 */
+.loghead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.loghead>span{color:var(--tx2);font-size:12px;line-height:1.7;min-width:0}
+.loghead>button{flex:0 0 auto}
+/* 「更多」最底下那行落款（原来是页面顶部的标题 + 版本号小胶囊） */
+.about{margin-top:18px;text-align:center;color:var(--tx3);font-size:12px}
+
+/* ── 模型选择 / 速度记录 列表 ── */
+.model-sheet{max-height:92vh}
+.model-sheet.editing{height:92vh;height:92dvh;max-height:92dvh;overflow:hidden;display:flex;flex-direction:column}
+.model-sheet.editing #pickBrowse{display:none!important}
+.model-sheet.editing #pickEdit{display:flex!important;flex:1;min-height:0;flex-direction:column}
+.model-sheet.editing #edTitle{flex:0 0 auto;margin-bottom:10px}
+#edFields{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 2px 10px}
+#edActions{flex:0 0 auto;padding-top:8px;border-top:1px solid var(--line);background:#1f1f22}
+#edActions .row{margin:0 0 7px}
+#edActions .row:last-child{margin-bottom:0}
+#edActions button{min-height:44px;padding:8px 10px;font-size:13px}
+.model-sheet .plist{max-height:48vh}
+.model-sheet .plist .it .l{white-space:normal;overflow:visible;overflow-wrap:anywhere}
+.model-sheet .plist .it{align-items:flex-start}
+.model-actions{display:flex;gap:6px;flex:0 0 auto}
+.model-actions button{min-height:40px;padding:0 11px;font-size:12px}
+.model-actions .gray{background:var(--track)}
+.perf-gpu{display:flex;justify-content:space-between;gap:8px;margin:-4px 0 12px;color:var(--tx2);font-size:12px}
+.perf-gpu b{font-weight:500;color:var(--tx);font-variant-numeric:tabular-nums}
+.plist{background:var(--inset);border-radius:var(--r);overflow:auto;max-height:52vh}
+.plist .it{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  min-height:52px;padding:13px 14px;font-size:13px;border-bottom:1px solid var(--line);color:var(--tx)}
+.author-group{padding:0 12px 10px;margin-bottom:10px;border-bottom:1px solid var(--line)}
+.author-group:last-child{margin-bottom:0;padding-bottom:0;border-bottom:0}
+.author-head{padding:12px 0 5px;color:var(--tx3);font-size:11.5px;font-weight:600;letter-spacing:.2px}
+.author-group:first-child .author-head{padding-top:10px}
+.author-group .it{padding-left:0;padding-right:0}
+.author-group .it:last-child{border-bottom:0}
+/* 名字最长两行，多了省略号 —— 再长的名字（Qwen3.8-27B-Cold-Fusion-GAIN-…）本来能占三行，
+   列表被几条长名字撑得高矮不一（用户 2026-09-26 要求）。clamp 得挂在**内层**：
+   外层的 inline-flex 是「正在使用」那颗药丸的底，不能换成 -webkit-box。 */
+.model-title{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.mt-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.model-title.starred{color:#f2bf42}
+/* 「正在使用」那颗模型名。0.3.25 是 14% 绿底、字色不动 —— 深底上几乎看不出来，
+   用户 2026-09-26 要求加亮：现在底 28% + 一圈内描边 + 亮绿字。
+   （必须写在这儿：`.plist .it.cur .l` 那句只染 .l，名字自己的 .starred 金色会盖过它）
+   **左右内边距只能 4px**：名字是 inline-flex，宽度吃掉整行时它会折成两行，
+   整条从 67px 涨到 89px（实测 2px/1px 4px 都不折，5px 起就折）。 */
+.model-title.current{background:rgba(48,209,88,.28);box-shadow:inset 0 0 0 1px rgba(72,231,110,.55);
+  color:#c9ffd5;border-radius:6px;padding:2px 4px;font-weight:600}
+.pick-sort{gap:3px;margin:-7px 0 10px;padding:4px;width:max-content}
+.pick-sort .tab{padding:7px 13px;min-height:36px;font-size:12px}
+.plist .it:last-child{border-bottom:0}
+.plist .it:active{background:rgba(255,255,255,.05)}
+.plist .it .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.plist .it .l em{display:block;font-style:normal;color:var(--tx2);font-size:11.5px;margin-top:2px}
+/* 「未实测 / 视觉」跟在第二行 gb · MTP 后面（用户 2026-09-26 要求），
+   所以它是 `<em>` 里的行内块，不是名字那一行。 */
+.model-tags{display:inline-flex;gap:4px;margin-left:6px;vertical-align:middle}
+.plist .it .r{flex:0 0 auto;font-weight:500;font-variant-numeric:tabular-nums}
+.plist .it .r i{color:var(--tx3);font-style:normal;font-weight:400;margin-left:7px}
+.plist .it.cur .l{color:var(--green)}
+/* 记录那条第二行现在有「命中 / 入 / 出 / 用时」四段，比别的列表长。
+   上面 `.l` 是 nowrap + ellipsis，**这里必须放开换行** ——
+   否则窄屏上最后那段会被无声截掉（就是那种「不报错但内容少了」的坑）。 */
+#perfList .it .l em{white-space:normal;overflow:visible}
+
+/* ── 参数编辑 ── */
+.fl{margin-bottom:16px}
+.fl>label{display:block;font-size:12.5px;color:var(--tx2);margin-bottom:6px}
+.fl>label i{color:var(--tx3);font-style:normal}
+
+/* ── 减少动态效果 ─────────────────────────────────────────
+   系统里开了「减弱动态效果」就照做。本页会动的东西只有三处：
+   状态点的呼吸、按钮按下的缩放 —— 都不传递额外信息，停掉不影响理解。 */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important}
+  .dot.loading,.dot.stopping{animation:none;opacity:.55}
+}
+</style>
+</head>
+<body>
+
+<!-- 图标一次性定义，下面用 <use> 引用。比 emoji 干净，也不会被系统字体换掉样子。
+     颜色由全局 svg{fill:currentColor} 带；stroke 型的自己写 fill="none"。 -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-pause" viewBox="0 0 24 24">
+    <rect x="7" y="5" width="3.6" height="14" rx="1.4"/>
+    <rect x="13.4" y="5" width="3.6" height="14" rx="1.4"/>
+  </symbol>
+  <symbol id="i-play" viewBox="0 0 24 24">
+    <path d="M8.5 5.4l10.5 6.6-10.5 6.6z"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24">
+    <path d="M20.4 14.6A8.8 8.8 0 0 1 9.4 3.6a8.8 8.8 0 1 0 11 11z"/>
+  </symbol>
+  <symbol id="i-dots" viewBox="0 0 24 24">
+    <circle cx="5.6" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18.4" cy="12" r="1.9"/>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24">
+    <path d="M20 12a8 8 0 1 1-2.4-5.7" fill="none" stroke="currentColor" stroke-width="1.9"
+      stroke-linecap="round"/>
+    <path d="M20 4.2v4.6h-4.6" fill="none" stroke="currentColor" stroke-width="1.9"
+      stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <!-- 重启：带中心圆的循环箭头。故意跟 i-refresh（单弧无圆心）拉开距离 ——
+       这两颗按钮在「更多」里挨着，图标一样的话会点错。 -->
+  <symbol id="i-restart" viewBox="0 0 24 24">
+    <path d="M20.5 12a8.5 8.5 0 1 1-2.5-6" fill="none" stroke="currentColor" stroke-width="1.9"
+      stroke-linecap="round"/>
+    <path d="M20.6 3.6v4.8h-4.8" fill="none" stroke="currentColor" stroke-width="1.9"
+      stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="12" cy="12" r="2.1" fill="none" stroke="currentColor" stroke-width="1.9"/>
+  </symbol>
+  <symbol id="i-power" viewBox="0 0 24 24">
+    <path d="M12 3.4v8.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    <path d="M7.1 6.5a7.6 7.6 0 1 0 9.8 0" fill="none" stroke="currentColor" stroke-width="1.9"
+      stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-eject" viewBox="0 0 24 24">
+    <path d="M12 4.6l7.2 8.2H4.8z"/>
+    <rect x="4.8" y="15.4" width="14.4" height="3.2" rx="1.6"/>
+  </symbol>
+  <symbol id="i-search" viewBox="0 0 24 24">
+    <circle cx="11" cy="11" r="6.6"/><path d="M16 16l4.2 4.2"/>
+  </symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24">
+    <path d="M9.5 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.1"
+      stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-tps" viewBox="0 0 24 24">
+    <path d="M4 19.6h16" fill="none" stroke="currentColor" stroke-width="1.9"
+      stroke-linecap="round"/>
+    <path d="M5.2 15.4l4-4.4 3.3 2.9 6.3-6.9" fill="none" stroke="currentColor"
+      stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-log" viewBox="0 0 24 24">
+    <path d="M6.2 3.6h8.3L19.8 8.9v11.5H6.2z" fill="none" stroke="currentColor"
+      stroke-width="1.9" stroke-linejoin="round"/>
+    <path d="M9.4 12h7.2M9.4 15.8h7.2" fill="none" stroke="currentColor"
+      stroke-width="1.9" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
+<!-- 标题「模型管理器 + 版本号」v0.3.05 挪进「更多」了（用户 2026-09-21 要求），
+     主屏上方改为监控内容；模型状态卡放到底部操作区。版本号元素还在，只是换了地方，
+     `$('#ver').textContent` 那行不用改。
+     `.sub`（出错时才出现的那行黄字）留在原地，见下面那条。 -->
+<div class="sub" id="sub"></div>
+
+<!-- 主监控内容在上；模型状态与高频操作组成底部操作区，单手可随时触达。 -->
+<!-- 最上面那条「监控」栏（页签 + 显存/温度/功耗摘要）2026-09-26 删掉了（用户要求）：
+     那块**只重复曲线表头里已经有的数字**，却占掉 50px + 12px 外边距；删掉之后这段高度
+     全给曲线（92 → 120px），监控区的总高度也涨到约原来的 1.2 倍。
+     页签更是早在 v0.3.05 就没了 —— 只剩一个永远选中的「监控」，是块死 UI。 -->
+<div class="pane">
+  <div id="paneRes">
+    <div class="rc"><div class="rch"><span class="lab"><i class="cdot" style="background:#bf8bff"></i>内存</span><b id="m_now" style="color:#bf8bff">—</b></div><div class="well"><canvas id="cv_mem" role="img" aria-label="内存占用曲线" style="width:100%;height:120px;display:block"></canvas></div></div>
+    <div class="rc"><div class="rch"><span class="lab"><i class="cdot" style="background:#4f8cff"></i>显存</span><b id="v_now" style="color:#4f8cff">—</b></div><div class="well"><canvas id="cv_vram" role="img" aria-label="显存占用曲线" style="width:100%;height:120px;display:block"></canvas></div></div>
+    <div class="rc"><div class="rch"><span class="lab"><i class="cdot" style="background:#f5a623"></i>GPU 功耗</span><span class="rv"><b id="p_now" style="color:#f5a623">—</b><b id="p_max" class="dim" style="color:var(--tx3)"></b></span></div><div class="well"><canvas id="cv_pwr" role="img" aria-label="GPU 功耗曲线" style="width:100%;height:120px;display:block"></canvas></div></div>
+    <div class="rc" style="margin-bottom:2px"><div class="rch"><span class="lab"><i class="cdot" style="background:#2ecc71"></i>GPU 温度</span><span class="rv"><b id="t_now" style="color:#2ecc71">—</b><b id="t_max" class="dim" style="color:var(--tx3)"></b></span></div><div class="well"><canvas id="cv_tmp" role="img" aria-label="GPU 温度曲线" style="width:100%;height:120px;display:block"></canvas></div></div>
+  </div>
+</div>
+
+<div class="dock">
+  <div class="card" id="statusCard"></div>
+  <div class="row" id="takeoverRow" style="display:none"><button class="amber" id="btnTakeover">接管手动启动的模型</button></div>
+  <nav class="acts">
+    <button id="btnPause"><svg class="ic i-pause"><use href="#i-pause"/></svg><svg class="ic i-play"><use href="#i-play"/></svg><span id="pauseTx">暂停</span></button>
+    <button id="btnSleep"><svg class="ic"><use href="#i-moon"/></svg><span>睡眠</span></button>
+    <button id="btnPerf"><svg class="ic"><use href="#i-tps"/></svg><span>记录</span></button>
+    <button id="btnMore"><svg class="ic"><use href="#i-dots"/></svg><span>更多</span></button>
+  </nav>
+</div>
+
+<!-- 模型选择与参数编辑共用此面板；加载后关闭面板并返回监控主界面。 -->
+<div class="modal" id="pick" style="display:none">
+  <div class="sheet model-sheet">
+    <div class="grab"></div>
+    <div id="pickBrowse">
+      <div class="sh-t">模型</div>
+      <div class="trackbox pick-sort" role="group" aria-label="模型排序">
+        <button class="tab on" id="pickSortUsage" type="button" aria-pressed="true">使用次数</button>
+        <button class="tab" id="pickSortAuthor" type="button" aria-pressed="false">作者名</button>
+      </div>
+      <div class="searchbar"><svg class="sic"><use href="#i-search"/></svg><input id="pickQuery" placeholder="搜作者或模型名…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="plist" id="pickList"></div>
+      <!-- 底部这两颗是「针对**已加载**那个模型」的快捷入口（用户 2026-09-26 要求）：
+           列表里那颗「参数」得先滚到该模型那一行才点得到，模型一多就得翻半天。
+           「修改参数」= 直接打开当前运行模型的编辑视图，改完那边自带「保存并重新加载」；
+           「日志」= 那层日志弹层（里面第三段就是「不同配置下的 t/s」）。
+           id 别和别处撞：列表里的按钮是 data-cfg 动态生成的，这儿是静态的。 -->
+      <div class="row">
+        <button id="pickEditCur">修改参数</button>
+        <button class="gray" id="pickLogs">日志</button>
+      </div>
+      <div class="row"><button class="gray" id="pickClose">关闭</button></div>
+    </div>
+    <div id="pickEdit" style="display:none">
+      <div id="edTitle" class="sh-t"></div><div id="edFields"></div>
+      <div id="edActions">
+        <div class="row"><button class="gray" id="edCancel">返回模型</button><button id="edSave">保存</button></div>
+        <div class="row"><button class="gray" id="edSaveReload">保存并重新加载</button></div>
+        <div class="hint">改完要重新加载模型才生效。「保存」只写进 models.json，下次加载时用。</div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- ── 更多：不常用但必须够得着的东西 ──────────────────────────
+     完全关机故意藏在这一层：它会让 80/8091 再也起不来（理由见 docs\power.md），
+     主路的「睡眠」留在上面那一排。 -->
+<div class="modal" id="more" style="display:none">
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="sh-t">更多</div>
+
+    <button class="gray" id="btnRefresh">
+      <svg><use href="#i-refresh"/></svg>重新扫描模型
+    </button>
+    <!-- id 必须和状态卡里那颗（render() 用 innerHTML 生成、也叫 btnUnload）区分开，
+         否则全文档两个同名 id，$('#btnUnload') 只会拿到先出现的那个 -->
+    <button class="gray" id="btnUnloadSheet">
+      <svg><use href="#i-eject"/></svg>卸载当前模型
+    </button>
+    <!-- 「更多」的第二层：点了**不关「更多」**，日志弹层压在它上面（z-index 25），
+         关掉日志就又回到「更多」。 -->
+    <button class="gray" id="btnLogs">
+      <svg><use href="#i-log"/></svg>日志
+    </button>
+    <!-- 重启管理器。改了 config.json / 源码之后用它 —— 那是唯一必须重启才生效的两样。
+         跟下面那颗「完全关机」不是一类：这个几秒后自己回来，所以前端也不走
+         enterShutting()（那个 stopTick 之后没有任何回滚路径）。 -->
+    <button class="gray" id="btnRestart">
+      <svg><use href="#i-restart"/></svg>重启管理器
+    </button>
+    <div class="hint">
+      改了 config.json 或源码之后点它。新进程会<b>认领</b>正在跑的模型，
+      所以只断几秒，不用重新加载。
+    </div>
+    <!-- 「记录」不在这儿 —— 它在上面那排操作槽里（#btnPerf，用户 2026-09-21 要求放「更多」左边）。
+         这一层现在只有「日志」一个。 -->
+
+    <div class="sep"></div>
+    <div class="hint" style="margin-top:0">
+      前端连这个：API 地址 <code id="ep"></code><br>
+      控制台　 <code id="ctl"></code><br>
+      API Key
+    </div>
+    <!-- key **单独占一行、写完整**（用户 2026-09-21 要求）。
+         原来它跟在「API Key」后面，还被 JS 截成前 12 位 + …，手机上根本抄不下来。
+         43 个十六进制字符在窄屏上会顶到边，所以给个 `word-break` 让它自己在框里折。 -->
+    <div class="keyline"><code id="apikey"></code></div>
+    <div class="hint">
+      模型填列表里任意一个，填哪个就自动加载哪个。
+    </div>
+
+    <div class="sep"></div>
+    <button class="red" id="btnShutdown">
+      <svg><use href="#i-power"/></svg>完全关机
+    </button>
+    <div class="hint">
+      关机后必须有人到机器前输 PIN，而管理器挂在登录上 ——
+      80 / 8091 不会再自己起来。想远程接着用请点上面的「睡眠」。
+    </div>
+
+    <div class="row"><button class="gray" id="moreClose">关闭</button></div>
+
+    <!-- 标题 + 版本号从页面顶部挪到这儿（用户 2026-09-21 要求）。
+         放最底下当落款：上面全是操作，没人会在点按钮的路上被它挡着。
+         `#ver` 这个 id 不能改 —— 脚本末尾那句 `$('#ver').textContent = 'v' + UI_VER` 靠它。 -->
+    <div class="about">模型管理器<span class="ver" id="ver"></span></div>
+  </div>
+</div>
+
+<!-- ── 日志：从「更多」点进来的第二层 ──────────────────────────
+     以前加载 / 卸载模型时，状态卡里会自己冒出一个 <pre> 日志框（loading / stopping /
+     error 三种相位），用户 2026-09-21 要求删掉、挪到这儿。两个来源分开显示，别混：
+       上段 = 模型加载/卸载记录（/api/logs 的 logs，即 RT.load_log，含引擎命令行）
+       下段 = 管理器运行日志（同接口的 manager，是 logs\manager.log 的尾巴）
+       末段 = 不同配置下的 t/s（v0.3.27 加，数据来自 /api/state 的 perf，不走这个接口）
+     内容在**打开时才拉**，不跟着 1.5 秒轮询重建 —— 日志是拿来翻的，
+     每轮重建会把滚动位置弹回顶部（模型列表踩过同一个坑，见 docs\ui.md 第三节）。 -->
+<div class="modal" id="logs" style="display:none">
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="sh-t">日志</div>
+    <!-- 两段各自带一个「看全文 / 看摘要」开关：默认只给最近 10 条、每行截到 64 字
+         （用户 2026-09-26：「在我看的界面只显示简单内容」）。
+         **截断必须留展开口子** —— 引擎完整命令行、报错原文都在那些长行里，
+         藏掉就再也查不到了（ui-ux-pro-max 的 Truncation 规则：省略号 + expand）。 -->
+    <div class="loghead" style="margin:-10px 0 8px">
+      <span>模型加载 / 卸载记录</span>
+      <button class="sm gray" id="logLoadMore">看全文</button>
+    </div>
+    <pre id="logLoad"></pre>
+    <div class="loghead" style="margin:14px 0 8px">
+      <span>管理器运行日志（睡眠 / 关机 / 改参数）</span>
+      <button class="sm gray" id="logMgrMore">看全文</button>
+    </div>
+    <pre id="logMgr"></pre>
+    <!-- 第三段：同一设置下的平均 t/s。用户 2026-09-26 要求 ——「记录」弹层给的是
+         曲线 + 每一次的明细，比配置还是这儿的平均值对着看快。
+         这段文本**由管理器生成**（/api/state 的 tps_summary，同一份落在 logs\tps-summary.md），
+         页面一个字都不算、也不许手改 —— 排版规矩在 model_manager.py 的 build_tps_summary()。 -->
+    <div class="hint" id="logTpsHint" style="margin:14px 0 8px">不同配置下的 t/s（同一设置取平均 · 逐次明细在「记录」里）</div>
+    <pre id="logTps"></pre>
+    <div class="row"><button class="gray" id="logsClose">关闭</button></div>
+  </div>
+</div>
+
+<!-- 确认弹层。**绝不用原生 confirm()** —— 手机浏览器（Safari / 微信 / 各家 WebView）
+   会「阻止此页面创建更多对话框」，之后 confirm 直接返回 false，
+   表现就是**按钮点了完全没反应**。2026-09-20 用户报的「睡眠/关机/卸载全无效」就是它：
+   这三个恰好是仅有的走 confirm 的按钮。
+   自己画一个，行为可控、样式也统一。 -->
+<div class="modal" id="ask" style="display:none">
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="sh-t" id="askTitle"></div>
+    <div class="hint" id="askBody" style="margin:-8px 0 0;white-space:pre-wrap"></div>
+    <div class="row" style="margin-top:18px">
+      <button class="gray" id="askNo">取消</button>
+      <button id="askYes">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 输出速度记录。做成弹层而不是摊在页面上，原因见 drawPerf() 上面的注释 -->
+<div class="modal" id="perf" style="display:none">
+  <div class="sheet">
+    <div class="grab"></div>
+    <div class="sh-t">输出速度记录</div>
+    <div class="hint" style="margin:-10px 0 12px" id="perfSub"></div>
+    <div class="perf-gpu"><span>GPU 使用率 <b id="perfGpu">—</b></span><span>共享 GPU 内存 <b id="perfShared">—</b></span></div>
+    <div class="well" style="margin-bottom:12px">
+      <canvas id="cv_tps" role="img" aria-label="输出速度曲线"
+        style="width:100%;height:52px;display:block"></canvas>
+    </div>
+    <div class="plist" id="perfList"></div>
+    <div class="row"><button class="gray" id="perfClose">关闭</button></div>
+    <div class="hint">
+      服务端留最近 50 条（重启管理器才清），记录存在电脑上，手机刷新页面不会丢。
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let KEY = new URLSearchParams(location.search).get('k')
+       || localStorage.getItem('llmk') || '';
+if (KEY) localStorage.setItem('llmk', KEY);
+// 这个占位符由 Python 在发送页面时替换成文件第一行注释里的版本号，
+// 所以版本号只在一处定义。以前是手写常量，拆分时忘了同步，
+// 结果两边永远对不上，手机疯狂刷新。
+const UI_VER = '__UI_VER__';
+let busy = false, lastState = null;
+
+function esc(s){return (s||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+// 这三个阈值现在只管**数字标红**（每条曲线右上角那个读数），
+// 曲线本身不再画警戒线了 —— 颜色改成随高度渐变，见 drawLine()。
+const MEM_WARN_MB  = 32 * 1024;   // 内存 32 GB
+const POWER_WARN_W = 350;         // 功耗 350 W（实测推理峰值 366W）
+const TEMP_MAX_C   = 100;         // 温度图 y 轴上限（100°C 是危险线）
+// 温度阈值和功耗那条一个道理：**设在满载值之下，所以满载会变色**。
+// 原来定的是 70（满载 51~60，够不着）—— 结果功耗那个读数常红、温度这个永远灰，
+// 两个「最高 xx」颜色对不上，用户 2026-09-13 指出后统一成这个规矩。
+const TEMP_WARN_C  = 50;
+const WARN_C = '#ff5c5c';         // 数字标红用的红
+const HOT_C  = '#ff2b2b';         // 曲线渐变到顶时的纯红
+// 「最高 xx」平时那档灰。**必须和 CSS 里的 --tx3 是同一个值** ——
+// 原来写的是 #5d6678，在卡片底上只有 2.6:1，手机上基本看不清（2026-09-20 调亮）。
+// 这里没用 getComputedStyle 去读变量：假 DOM 测试里没有那个函数，会直接抛。
+const DIM_C  = '#8a8a90';
+// 热力渐变的色标（底 -> 顶）。中间那一档是必须的：本色直接插值到红，
+// 绿会从一坨发灰的橄榄色中间穿过去，很难看。所以温度绕黄、功耗绕橙、内存绕桃红。
+const RAMP_MEM = ['#bf8bff', '#dd5f9e', HOT_C];
+const RAMP_PWR = ['#f5a623', '#ff7a1f', HOT_C];
+const RAMP_TMP = ['#2ecc71', '#e0c04a', HOT_C];
+
+// 标题下那行平时不占位置，只有出错时才有话说
+function setSub(msg){
+  const el = document.querySelector('#sub');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = msg ? 'sub on' : 'sub';
+}
+
+async function api(path, body){
+  const r = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: {'Authorization':'Bearer '+KEY, 'Content-Type':'application/json'},
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  if (r.status === 401) throw new Error('401');
+  return r.json();
+}
+
+function openModal(sel){ const el = $(sel); if (el) el.style.display = 'flex'; }
+function closeModal(sel){ const el = $(sel); if (el) el.style.display = 'none'; }
+
+// ── 自己的确认弹层（**不要换回原生 confirm()**，理由见 HTML 里那段注释）──
+// 返回 Promise<boolean>，用法：if (!(await ask(...))) return;
+// 注意：调用它的函数**必须先 await 再往下走**，而且外面点按钮时别 await 那个
+// onclick（它会一直挂到用户点确定为止）。
+let ASK_RESOLVE = null;
+function ask(title, body, okLabel, danger){
+  return new Promise(function(res){
+    ASK_RESOLVE = res;
+    $('#askTitle').textContent = title;
+    $('#askBody').textContent = body || '';
+    const y = $('#askYes');
+    y.textContent = okLabel || '确定';
+    y.className = danger ? 'red' : '';
+    openModal('#ask');
+  });
+}
+function answerAsk(v){
+  closeModal('#ask');
+  const r = ASK_RESOLVE;
+  ASK_RESOLVE = null;
+  if (r) r(v);
+}
+$('#askYes').onclick = () => answerAsk(true);
+$('#askNo').onclick = () => answerAsk(false);
+$('#ask').onclick = e => { if (e.target.id === 'ask') answerAsk(false); };
+
+const PHASE = {idle:'空闲', stopping:'正在停止上一个模型', loading:'正在载入',
+               ready:'就绪', error:'出错了'};
+
+// 原 `RES_SUM` / `setSum()`（把监控摘要塞进顶部那条栏）v0.3.30 删了，跟那条栏一起。
+
+function render(s){
+  // 服务端的界面版本比本页新？自动重载拿新界面，免得用户一直看旧的。
+  // 必须防抖：万一版本号两边对不上（真出过这种事故），不防抖就会无限刷新，
+  // 手机直接被刷死。现在 15 秒内最多自动重载一次。
+  if (s.ui_version && s.ui_version !== UI_VER){
+    const last = +(sessionStorage.getItem('uiReload') || 0);
+    if (Date.now() - last > 15000){
+      sessionStorage.setItem('uiReload', String(Date.now()));
+      location.reload();
+    }
+    return;
+  }
+  lastState = s;
+  const p = s.phase, ok = p === 'ready';
+  setSub('');
+
+  let prog = '';
+  if (p === 'loading' || p === 'stopping'){
+    const pct = p === 'loading' ? Math.min(92, 8 + (s.elapsed||0)*1.7) : 45;
+    prog = '<span class="load-ring" style="--pct:'+pct+'%" role="progressbar" aria-label="'+(p==='loading'?'正在加载':'正在停止')+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(pct)+'"><svg><use href="#i-pause"/></svg></span>';
+  }
+
+  let head;
+  if (ok){
+    head = '<span class="big">'+esc(s.current_name||s.current)+'</span>'
+         + '<span class="meta">已运行 ' + fmtDur(s.elapsed) + ' · 载入 ' + (s.load_seconds||'?') + 's</span>';
+  } else if (p === 'error'){
+    head = '<span class="big err">加载失败</span>'
+         + '<span class="meta">' + esc(s.message) + '</span>';
+  } else {
+    head = '<span class="big">' + (PHASE[p]||p) + '</span>'
+         + '<span class="meta">' + esc(s.message) + '</span>';
+  }
+  const errDetail = (p === 'error' && s.last_error)
+    ? '<div class="warn">'+esc(s.last_error.slice(0,300))+'</div>' : '';
+
+  // **t/s / 命中 / 记录 那一整条统计条已经删掉了**（用户 2026-09-21 要求）。
+  // 三个数一起走：它们本来就是同一条 `--card2` 横条里的三格，只删中间一格没法看。
+  // 那三样东西现在都在「更多 → 记录」里（openPerf()），而且那边给的是**每一次**的
+  // 完整列表 + t/s 曲线，比卡片上只显示「最近一次」有用。
+  // 注意 `drawPerf(false)` 还留着 —— 记录弹层开着的时候得跟着轮询刷新，
+  // 它自己会在 `display:none` 时早退。
+
+  // 8091 被手动启动的模型占着时，管理器不抢，只提示
+  let warn = '';
+  if (!s.proxy_ok){
+    warn = '<div class="callout"><div class="warn" style="margin:0">8091 入口没起来：'
+         + (s.external && s.external.length
+              ? '有个手动启动的 llama-server（PID '+s.external.join(', ')+'）占着端口，正在用它聊天的话别急着接管。'
+              : '端口被别的程序占着。')
+         + '<br>点下面的「接管」可以把它收编给管理器管。</div></div>';
+  }
+
+  // 右边那颗：加载着就显示「卸载」（真卸载）；没加载时是「加载」，点了弹选择框
+  const actBtn = p === 'loading' || p === 'stopping' ? prog : ok
+    ? '<button class="gray sm" id="btnUnload">卸载</button>'
+    : '<button class="sm" id="btnUnload">加载</button>';
+
+  $('#statusCard').innerHTML =
+    '<div class="mrow">'
+    +  '<button class="mname" id="btnModel">'
+    +    '<span class="dot '+p+'"></span>'
+    +    '<span class="stxt">'+head+'</span>'
+    +    '<svg class="chev2"><use href="#i-chev"/></svg>'
+    +  '</button>'
+    +  actBtn
+    + '</div>'
+    + errDetail + warn;
+  // **状态卡里那个「加载/卸载时自己冒出来的日志框」已经删掉了**（用户 2026-09-21 要求）。
+  // 它原来在 loading / stopping / error 三种相位下弹出来占掉半张卡，想看的时候又只有
+  // 最后 10 行。现在整个搬到「更多 → 日志」里去了（openLogs()），那边给全、还不挡状态。
+  // 出错时该看见的东西没少：s.message 在 meta 行里，s.last_error 走上面的 errDetail。
+
+  // 这块 innerHTML 每次都重建，所以两个按钮的绑定也得每次重挂
+  const bm = $('#btnModel');
+  if (bm) bm.onclick = openPick;
+  const bu = $('#btnUnload');
+  if (bu) bu.onclick = () => { if (ok) doUnload(); else openPick(); };
+
+  $('#takeoverRow').style.display = (s.proxy_ok && !(s.external||[]).length) ? 'none' : 'flex';
+  $('#pauseTx').textContent = s.paused ? '恢复' : '暂停';
+  $('#btnPause').className = s.paused ? 'on' : '';
+  drawRes(s);
+  drawPerf(false);
+}
+
+// ── 选模型 ──
+// 状态卡的模型名点一下只到这儿，不直接加载 —— 用户 2026-09-20 明确要求。
+function compactCtx(ctx){if(!ctx)return '';const k=ctx/1024;return (Number.isInteger(k)?String(k):k.toFixed(3).replace(/0+$/,'').replace(/\.$/,''))+'k';}
+function renderPickList(){
+  const s = lastState;
+  if (!s) return;
+  const q = ($('#pickQuery').value || '').trim().toLowerCase();
+  const modelUsage = Object.assign({}, s.model_usage || {});
+  // 服务端尚未热重载时仅有最近 50 条 perf；正式总数从 model_usage 读取。
+  if (!Object.prototype.hasOwnProperty.call(s, 'model_usage'))
+    (s.perf || []).forEach(row => { if (row.model) modelUsage[row.model] = (modelUsage[row.model] || 0) + 1; });
+  const usageOf = id => Math.max(0, Number(modelUsage[id]) || 0);
+  const models = s.models.filter(m => !q || (m.name + ' ' + (m.author || '') + ' ' + m.id).toLowerCase().includes(q));
+  const grouped = new Map();
+  models.forEach(m => {
+    const author = m.author || '其他', key = author.toLowerCase();
+    let group = grouped.get(key);
+    if (!group){ group = {author,models:[],total:0}; grouped.set(key,group); }
+    group.models.push(m);
+    group.total += usageOf(m.id);
+  });
+  const groups = Array.from(grouped.values());
+  const byAuthor = (a,b) => a.author.toLowerCase().localeCompare(b.author.toLowerCase());
+  groups.forEach(group => group.models.sort(PICK_SORT === 'usage'
+    ? (a,b) => Number(b.star)-Number(a.star) || usageOf(b.id)-usageOf(a.id) || a.name.localeCompare(b.name)
+    : (a,b) => Number(b.star)-Number(a.star) || a.name.localeCompare(b.name)));
+  groups.sort(PICK_SORT === 'usage' ? (a,b) => b.total-a.total || byAuthor(a,b) : byAuthor);
+  $('#pickList').innerHTML = models.length ? groups.map(group=>
+    '<section class="author-group"><div class="author-head">'+esc(group.author)+'</div>'+group.models.map(m=>{
+    const isCur = m.id === s.current && s.phase === 'ready';
+    // min 没写 = 引擎按 0 跑（build_cmd 里 get("pmin", 0.0)）。null 必须落成 '0'，
+    // 不能落成空串 —— 那样会显示出「MTP 3/」这种断尾巴（0.3.25 的毛病）。
+    const pmin=(m.pmin==null||m.pmin==='')?0:m.pmin;
+    const mtp=m.mtp&&m.mtp!=='none'?'MTP '+(m.nmax||'')+'/'+pmin:'';
+    const note=[m.size_gb?Number(m.size_gb).toFixed(2)+'GB':'',mtp].filter(Boolean).join(' · ');
+    let tags = '';
+    if (!m.verified) tags += '<span class="tag y">未实测</span>';
+    if (m.mmproj) tags += '<span class="tag g">视觉</span>';   // 能力：绿
+    // 「MoE」= 模型**类型**，用紫色（.p）。挑模型时一眼能看出谁带专家
+    // （35B-A3B 这种放 24G 里照样快）；识别规则见 model_manager.py 的 is_moe()，
+    // 个数在参数页「专家层数」那个框的提示里。
+    if (m.moe) tags += '<span class="tag p">MoE</span>';
+    // 没标签时**不能留空壳**：空的行内块也会占位置（虽然现在它在 em 里，
+    // 但 0.3.25 就是被空壳撑高的 —— 85px → 104px，别再犯）。
+    const tagBox = tags ? '<span class="model-tags">'+tags+'</span>' : '';
+    return '<div class="it'+(isCur?' cur':'')+'">'
+      + '<span class="l"><span class="model-title'+(m.star?' starred':'')+(isCur?' current':'')+'" data-favorite="'+esc(m.id)+'" role="button" tabindex="0" title="点击切换收藏"><span class="mt-name">'+esc(m.name)+'</span></span><em>'+esc(note)+tagBox+'</em>'
+      + (m.warning ? '<em>'+esc(m.warning)+'</em>' : '')
+      + (m.exists === false ? '<em>文件不存在</em>' : '')+'</span>'
+      + '<span class="model-actions">'
+      + (m.exists === false ? '' : '<button data-load="'+esc(m.id)+'">加载</button>')
+      + '<button class="gray" data-cfg="'+esc(m.id)+'">参数</button></span></div>';
+    }).join('')+'</section>'
+  ).join('') : '<div class="it"><span class="l">没扫到模型</span></div>';
+  document.querySelectorAll('#pickList [data-load]').forEach(el=>{
+    el.onclick = () => { closeModal('#pick'); doLoad(el.dataset.load); };
+  });
+  document.querySelectorAll('#pickList [data-cfg]').forEach(el=>{
+    el.onclick = () => openEdit(el.dataset.cfg);
+  });
+  document.querySelectorAll('#pickList [data-favorite]').forEach(el=>{
+    const toggle=async()=>{
+      const m=(lastState.models||[]).find(x=>x.id===el.dataset.favorite); if(!m)return;
+      const r=await api('/api/config',{id:m.id,patch:{star:!m.star}});
+      if(!r.ok){const msg=r.error||'未知错误';alert(msg.includes('没有要改的字段')?'当前管理器尚未加载收藏保存更新；请在安全停止当前模型后重启管理器，再收藏。':'收藏保存失败：'+msg);return;}
+      await tick(); renderPickList();
+    };
+    el.onclick=toggle;
+    el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();}};
+  });
+}
+function updatePickSort(){
+  [['usage','#pickSortUsage'],['author','#pickSortAuthor']].forEach(([value,selector])=>{
+    const el=$(selector), on=PICK_SORT===value;
+    el.className='tab'+(on?' on':''); el.setAttribute('aria-pressed',on?'true':'false');
+  });
+}
+function openPick(){
+  const s=lastState;
+  if (!s) return;
+  const sheet=document.querySelector('#pick .sheet');
+  if (sheet) sheet.classList.remove('editing');
+  $('#pickBrowse').style.display='block';
+  $('#pickEdit').style.display='none';
+  updatePickSort(); renderPickList(); openModal('#pick');
+}
+$('#pickSortUsage').onclick=()=>{PICK_SORT='usage';updatePickSort();renderPickList();};
+$('#pickSortAuthor').onclick=()=>{PICK_SORT='author';updatePickSort();renderPickList();};
+$('#pickClose').onclick = () => closeModal('#pick');
+$('#pick').onclick = e => { if (e.target.id === 'pick') closeModal('#pick'); };
+$('#pickQuery').oninput = renderPickList;
+// 面板底部那两颗（v0.3.27）—— 针对**已加载**那个模型，所以从 s.current 取。
+// 两条失败分支都不许静默 return：openEdit() 找不到模型时自己会安静地返回，
+// 那样按钮看起来就是「点了没反应」（这套 UI 最烦人的一种表现）。
+$('#pickEditCur').onclick = () => {
+  const s = lastState || {};
+  if (!s.current) { alert('现在没有已加载的模型 —— 先在列表里点「加载」。'); return; }
+  if (!(s.models || []).some(x => x.id === s.current)) {
+    alert('已加载的模型不在列表里（多半是 models.json 里被删了），改不了参数。');
+    return;
+  }
+  openEdit(s.current);
+};
+// 和「更多」里那颗是**同一个弹层**：#logs 的 z-index 是 25，压得住模型面板的 20，
+// 关掉日志自然回到模型列表（不用在这儿自己关面板）。
+$('#pickLogs').onclick = () => openLogs(true);   // true = 滚到末段 t/s（用途就在那儿）
+
+// 画一条曲线。y 轴固定 0 到 limit，所以曲线的绝对高度 = 占用率，
+// 顶上那条虚线就是上限 —— 一眼能看出离满还有多远，不会被自动缩放骗了。
+//
+// ramp 给了就是「热力」曲线（内存/功耗/温度）：颜色只由 y 轴高度决定 ——
+// 底部本色、越往上越红、到顶（= limit）纯红。做法是把一条**竖直渐变直接当描边色**，
+// canvas 按每个像素的 y 取色，所以折线、填充、末端圆点自动都是该有的颜色，
+// 不用逐段算插值。ramp 不给就是单色曲线（显存）。
+// 2026-09-13 用户把原来的「越过警戒线那一段才变红」换成了这个渐变，并删掉了警戒线虚线。
+function drawLine(id, hist, limit, color, ramp){
+  const cv = document.querySelector('#' + id);
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 92;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  // 上限虚线（图表顶部 = 上限）
+  ctx.beginPath();
+  ctx.setLineDash([4, 3]);
+  ctx.moveTo(0, 1.5); ctx.lineTo(w, 1.5);
+  ctx.strokeStyle = 'rgba(255,255,255,.30)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const data = (hist || []).filter(v => v != null && v >= 0);
+  if (data.length < 2 || !limit) return;
+
+  const yOf = v => h - 1 - Math.min(v / limit, 1) * (h - 3.5);
+  const step = w / (data.length - 1);
+
+  // 描边色。热力图是一条从底到顶的竖直渐变，别的图就是个固定颜色。
+  let stroke = color;
+  if (ramp){
+    stroke = ctx.createLinearGradient(0, h, 0, 0);
+    ramp.forEach((c, i) => stroke.addColorStop(i / (ramp.length - 1), c));
+  }
+
+  const path = () => {
+    ctx.beginPath();
+    data.forEach((v, i) => { const x = i*step, y = yOf(v); i ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+  };
+
+  // 填充：色相跟着折线一起走，透明度按高度收（#rrggbbaa 的 aa）——
+  // 底部透明、顶部最实，和原来「上实下虚」的观感一致。
+  path();
+  const grad = ctx.createLinearGradient(0, h, 0, 0);       // 底 -> 顶，和描边同向
+  if (ramp){
+    ramp.forEach((c, i) => {
+      const t = i / (ramp.length - 1);
+      grad.addColorStop(t, c + Math.round(t * 0x77).toString(16).padStart(2, '0'));
+    });
+  } else {
+    grad.addColorStop(0, color + '00');
+    grad.addColorStop(1, color + '77');
+  }
+  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  // 折线
+  ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  path();
+  ctx.strokeStyle = stroke; ctx.stroke();
+
+  // 末端圆点。fillStyle 同样给渐变 —— canvas 会按圆点**所在的 y** 取色，
+  // 正好就是这个点该有的热力色，省得自己写颜色插值。
+  const lx = (data.length-1) * step, ly = yOf(data[data.length-1]);
+  ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, 6.2832);
+  ctx.fillStyle = stroke;
+  ctx.fill();
+}
+
+function drawRes(s){
+  const g = s.gpu || {};
+  const q = id => document.querySelector('#' + id);
+  const G = v => (v == null ? '—' : (v / 1024).toFixed(1));
+  const pct = (v, l) => (v != null && l) ? Math.round(v * 100 / l) + '%' : '—';
+
+  const vl = g.vram_limit || s.vram_total_mb;
+  const ml = g.mem_limit  || s.mem_total_mb;
+  const pl = g.limit;
+  const vNow = (g.vram != null ? g.vram : s.vram_used_mb);
+  const mNow = (g.mem  != null ? g.mem  : s.mem_used_mb);
+  const pNow = g.power;
+  const tNow = g.temp;
+
+  // （这里原来拼的是顶部那条摘要栏，v0.3.30 连栏一起删了 —— 下面每个数都有自己的表头）
+
+  if (q('v_now')) q('v_now').textContent = G(vNow) + ' / ' + G(vl) + ' GB · ' + pct(vNow, vl);
+  if (q('m_now')){
+    const memHot = mNow != null && mNow >= MEM_WARN_MB;          // 超过 32 GB 标红
+    q('m_now').style.color = memHot ? '#ff5c5c' : '#bf8bff';
+    q('m_now').textContent = G(mNow) + ' / ' + G(ml) + ' GB · ' + pct(mNow, ml);
+  }
+  if (q('p_now')){
+    const pwrHot = pNow != null && pNow >= POWER_WARN_W;
+    q('p_now').style.color = pwrHot ? WARN_C : '#f5a623';
+    q('p_now').textContent = (pNow == null ? '—' : pNow.toFixed(0))
+      + ' / ' + (pl == null ? '—' : pl.toFixed(0)) + ' W · ' + pct(pNow, pl);
+  }
+  // 最高功耗，和最高温同一个套路
+  if (q('p_max')){
+    const pm = g.power_max;
+    q('p_max').style.color = (pm != null && pm >= POWER_WARN_W) ? WARN_C : DIM_C;
+    q('p_max').textContent = pm == null ? '' : '最高 ' + pm.toFixed(0) + ' W';
+  }
+  if (q('t_now')){
+    const tHot = tNow != null && tNow >= TEMP_WARN_C;
+    q('t_now').style.color = tHot ? WARN_C : '#2ecc71';
+    q('t_now').textContent = (tNow == null ? '—' : tNow) + '°C';
+  }
+  // 开机跑到现在见过的最高温。平时灰着不抢眼，真超过阈值才标红 ——
+  // 那才是「需要看一眼」的信号。
+  if (q('t_max')){
+    const tm = g.temp_max;
+    q('t_max').style.color = (tm != null && tm >= TEMP_WARN_C) ? WARN_C : DIM_C;
+    q('t_max').textContent = tm == null ? '' : '最高 ' + tm + '°C';
+  }
+
+  // 主监控图始终可见；GPU 使用率与共享显存仅在「记录」面板显示。
+  drawLine('cv_mem',  g.mem_hist,   ml,        '#bf8bff', RAMP_MEM);
+  drawLine('cv_vram', g.vram_hist,  vl,        '#4f8cff');
+  drawLine('cv_pwr',  g.power_hist, pl,        '#f5a623', RAMP_PWR);
+  drawLine('cv_tmp',  g.temp_hist,  TEMP_MAX_C,'#2ecc71', RAMP_TMP);
+  if (q('perfGpu')) q('perfGpu').textContent = g.util == null ? '—' : g.util + '%';
+  if (q('perfShared')) q('perfShared').textContent = g.shared == null ? '—' : (g.shared / 1024).toFixed(2) + ' GB';
+}
+
+// ── 输出速度记录 ──────────────────────────────────────────────
+// 每次推理的结果都列出来（服务端留 50 条）+ 一条 t/s 曲线。
+// **入口是操作槽里那颗「记录」（`#btnPerf`，在「更多」左边）**，v0.3.05 起。
+// 它换过三次地方：状态卡统计条的「记录 ›」→ 更多弹层 → 操作槽。
+//
+// 为什么做成弹层、而不是直接摊在页面上：
+//   1. 条数会长，10 条就够吃掉手机半屏，50 条更不用说了；
+//   2. 摊在页面上就得跟着 1.5 秒的轮询一起重建，**正滚着会被弹回顶部**。
+//      （这个坑模型列表踩过，那边是靠 sig 比对绕开的。）
+// 列表**只在条数变了的时候**重建，重建前后把 scrollTop 存回去，手指停在哪儿就还在哪儿。
+let PERF_N = -1;
+
+function openPerf(){
+  const el = $('#perf');
+  if (!el) return;
+  el.style.display = 'flex';      // 不关「更多」—— 它是第二层，关掉这个自然露出来
+  drawPerf(true);                 // 打开时强制重画一次
+}
+
+function drawPerf(force){
+  const el = $('#perf'), list = $('#perfList');
+  if (!el || !list || el.style.display === 'none') return;
+  const rows = ((lastState && lastState.perf) || []).slice().reverse();   // 新的排前面
+  if (!force && PERF_N === rows.length && list.childElementCount) return; // 没新记录就别碰 DOM
+  PERF_N = rows.length;
+
+  const tps = rows.map(r => r.tps).filter(v => v != null);
+  $('#perfSub').textContent = tps.length
+    ? '共 ' + rows.length + ' 次 · 最新 ' + tps[0] + ' · 最高 ' + Math.max(...tps)
+      + ' · 平均 ' + (tps.reduce((a,b) => a+b, 0) / tps.length).toFixed(1) + ' t/s'
+    : '';
+
+  const st = list.scrollTop;                      // 重建前记下滚动位置
+  list.innerHTML = rows.length ? rows.map(r => {
+    // 第二行那串小字：命中 / 输入 tok / 输出 tok / 用时。
+    // **每段都先判 null 再拼** —— 老记录（v0.3.05 之前写的）没有 pin / ms 两个字段，
+    // 不判的话会显示成「入 undefined」「用时 NaNs」（服务端 perf 重启才清零，
+    // 升级后手机上看得到新旧混在一起的那一屏）。
+    const cfg = recCfg(r);
+    const bits = [r.accept == null ? '无投机' : '命中 ' + r.accept + '%'];
+    if (cfg) bits.push(cfg);
+    if (r.pin != null) bits.push('入 ' + r.pin);
+    if (r.n != null) bits.push('出 ' + r.n + ' tok');
+    if (r.ms != null) bits.push('用时 ' + (r.ms / 1000).toFixed(1) + 's');
+    return '<div class="it"><span class="l">' + esc(r.at || '') + '　' + esc(r.model || '')
+      + '<em>' + bits.join(' · ') + '</em></span>'
+    + '<span class="r">' + (r.tps == null ? '—' : r.tps) + ' t/s</span></div>';
+  }).join('') : '<div class="it"><span class="l">还没有记录 —— 聊一次就有了</span></div>';
+  list.scrollTop = st;                            // 放回去
+
+  // 图按时间正序画。**必须 map 出 tps**：rows 里是整条记录对象，
+  // 直接把对象数组丢给 drawTps，那边的 `v > 0` 对对象恒为 false，
+  // 会被过滤成空数组 —— 表现是**有记录也永远显示「至少要有两次记录才画得出曲线」**。
+  // 这个 bug 从加这个图那天就在（v0.2.6 及以前一直如此），2026-09-20 改版时才发现。
+  drawTps(rows.slice().reverse().map(r => r.tps));
+}
+
+// 「日志」末段的「不同配置下的 t/s」**不在这个文件里算** —— 那段文本由管理器生成
+// （model_manager.py 的 build_tps_summary()，同一份落在 logs	ps-summary.md，
+// 服务端通过 /api/state 的 tps_summary 送过来），页面只负责原样显示。
+// 2026-09-26 之前这里是 JS 算的，用户要求「记录最好是程序自动写出结果」；
+// 而且页面里算出来的东西 AI 读不到 —— 别再搬回来。
+
+// 一条记录的「配置」小字：ctx · KV · MTP。**记录弹层和日志末段共用这一份** ——
+// 同一批数据在两个地方显示得不一样时，看的人第一反应是「哪边坏了」。
+//
+// ⚠ mtp 字段**缺失**（v0.3.05 之前写的老记录）时整段不印，绝不能印成「无 MTP」：
+// 那是在替一条根本没存过这个信息的记录断言「它当时没开投机解码」。
+// 只有明确写着 'none' 才是「无 MTP」。p-min 缺省落成 0（build_cmd 用 get("pmin", 0.0)），
+// 落成空串会印出「MTP 3/」这种断尾巴（模型列表 v0.3.25 踩过）。
+function recCfg(r){
+  return [
+    compactCtx(r.ctx),
+    r.kv || '',
+    r.mtp ? (r.mtp === 'none' ? '无 MTP'
+                             : 'MTP ' + (r.nmax || '') + '/' + (r.pmin == null ? 0 : r.pmin)) : '',
+  ].filter(Boolean).join(' · ');
+}
+
+// t/s 的小折线。和资源那四条不一样：那个 y 轴是固定的 0~上限，这个没有天然上限
+// （换个模型、换个量化就全变了），所以按数据自己的最大值缩放、顶上留 15% 空 ——
+// 否则曲线不是贴着顶就是贴着底，看不出波动。
+function drawTps(vals){
+  const cv = document.querySelector('#cv_tps');
+  if (!cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth || 300, h = cv.clientHeight || 52;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const data = (vals || []).filter(v => v != null && v > 0);
+  if (data.length < 2){
+    ctx.fillStyle = '#636366';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('至少要有两次记录才画得出曲线', 2, h/2 + 4);
+    return;
+  }
+  const hi = Math.max(...data) * 1.15;
+  const yOf = v => h - 1 - Math.min(v / hi, 1) * (h - 3.5);
+  const step = w / (data.length - 1);
+  const path = () => {
+    ctx.beginPath();
+    data.forEach((v, i) => { const x = i*step, y = yOf(v); i ? ctx.lineTo(x,y) : ctx.moveTo(x,y); });
+  };
+  path();
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, '#4f8cff77');
+  g.addColorStop(1, '#4f8cff00');
+  ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+  ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = 1.8; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  path();
+  ctx.strokeStyle = '#4f8cff';
+  ctx.stroke();
+  const lx = (data.length-1) * step, ly = yOf(data[data.length-1]);
+  ctx.beginPath(); ctx.arc(lx, ly, 2.6, 0, 6.2832);
+  ctx.fillStyle = '#4f8cff'; ctx.fill();
+}
+
+function fmtDur(sec){
+  if (!sec) return '0 秒';
+  if (sec < 60) return sec + ' 秒';
+  if (sec < 3600) return Math.floor(sec/60) + ' 分 ' + (sec%60) + ' 秒';
+  return Math.floor(sec/3600) + ' 小时 ' + Math.floor((sec%3600)/60) + ' 分';
+}
+
+// 加载/卸载都**不弹确认**（用户 2026-09-20 要求：直接做，出错才弹）。
+// 但服务端把失败放在 body 里（400/404 + ok:false），不是 HTTP 错误 ——
+// 不看 r.ok 就会「点了没反应」，所以这里必须自己检查。
+async function doLoad(id){
+  if (busy) return;
+  busy = true;
+  try {
+    const r = await api('/api/load', {id});
+    if (r && r.ok === false) alert('加载失败：' + (r.error || r.message || '未知错误'));
+  } catch(e){
+    alert(e.message === '401' ? 'API key 不对' : '加载失败，检查一下手机和电脑的连接');
+  }
+  busy = false;
+  tick();
+}
+
+// 卸载**不弹确认**（用户 2026-09-20 要求：加载/卸载直接做，只有出错才弹提示）。
+// 卸载本身不危险 —— 切换模型时管理器也是先卸再载，卸完随时能再载回来。
+async function doUnload(){
+  try {
+    const r = await api('/api/unload', {});
+    if (r && r.ok === false) alert('卸载失败：' + (r.error || r.message || '未知错误'));
+  } catch(e){
+    alert(e.message === '401' ? 'API key 不对' : '卸载失败，检查一下手机和电脑的连接');
+  }
+  tick();
+}
+
+// ── 参数编辑 ──
+let EDIT_ID = null;
+let PICK_SORT = 'usage';
+
+function fl(label, hint, input){
+  return '<div class="fl"><label>' + label + (hint ? ' <i>' + hint + '</i>' : '')
+       + '</label>' + input + '</div>';
+}
+
+function openEdit(id){
+  const m = ((lastState && lastState.models) || []).find(x => x.id === id);
+  if (!m) return;
+  EDIT_ID = id;
+  const sheet = document.querySelector('#pick .sheet');
+  if (sheet) sheet.classList.add('editing');
+  $('#pickBrowse').style.display = 'none';
+  $('#pickEdit').style.display = 'block';
+  $('#edTitle').innerHTML = (m.author ? '<span class="au">'+esc(m.author)+'</span>' : '') + esc(m.name);
+
+  const opt = (v, t, cur) =>
+    '<option value="'+v+'"'+(cur===v?' selected':'')+'>'+t+'</option>';
+
+  $('#edFields').innerHTML =
+      fl('上下文长度 ctx（k）', '1k = 1024 tokens；80k = 81920',
+         '<input id="ed_ctx" type="number" inputmode="decimal" step="0.001" value="'+(m.ctx ? (m.ctx/1024).toFixed(3).replace(/0+$/,'').replace(/\.$/,'') : '32')+'">')
+    // MTP 开关：自动扫描按 gguf 的 NextN 层判断，这儿是手动纠正用的。
+    // 「内置」= 模型自带 MTP 头（加 --spec-type draft-mtp，不加会加载失败）
+    + fl('MTP 投机解码', '内置 = 自带 NextN 头 · 关掉会明显变慢',
+         '<select id="ed_mtp">'
+         + opt('builtin','内置 MTP（模型自带）', m.mtp||'none')
+         + opt('external','外挂 draft 模型', m.mtp||'none')
+         + opt('none','关闭', m.mtp||'none')
+         + '</select>')
+    + fl('MTP 深度 nmax', '候选 token 数 · 关掉 MTP 时无效',
+         '<input id="ed_nmax" type="number" inputmode="numeric" min="1" max="6" value="'+(m.nmax||2)+'">')
+    + fl('MTP min（p-min）', '候选 token 的最低概率阈值 · 关掉 MTP 时无效',
+         '<input id="ed_pmin" type="number" inputmode="decimal" min="0" max="1" step="0.01" value="'+(m.pmin==null?0:m.pmin)+'">')
+    // 这个 select 故意不设 appearance:none —— 点开就是 Safari 原生的选择器，
+    // 配合 html{color-scheme:dark} 那个选择器也是暗色的（用户 2026-09-20 要求）。
+    + fl('KV 缓存类型', 'q4_0 省显存，解码速度和 q8_0 一样',
+         '<select id="ed_kv">' + ['q4_0','q8_0','f16'].map(k=>opt(k,k,m.kv||'q4_0')).join('') + '</select>')
+    + fl('聊天模板', '架构 ' + (m.arch || '未知') + (m.base ? ' · ' + m.base : ''),
+         '<select id="ed_tpl">'
+         + opt('auto','自动（Qwen 系套自定义模板）', m.template||'auto')
+         + opt('custom','强制用自定义模板', m.template||'auto')
+         + opt('model','用模型自带的', m.template||'auto')
+         + '</select>')
+    + fl('作者', '', '<input id="ed_author" value="'+esc(m.author||'')+'" placeholder="显示在模型列表里">')
+    + fl('额外参数', '空格分隔',
+         '<input id="ed_extra" value="'+esc((m.extra||[]).join(' '))+'" placeholder="例如 --threads 8">')
+    + fl('多模态投影 mmproj', '同目录有 mmproj-*.gguf 会自动填这儿 · 清空 = 不要视觉',
+         '<input id="ed_mmproj" value="'+esc(m.mmproj||'')+'" placeholder="留空 = 该模型没有视觉能力">')
+    // 专家层数：**只有 MoE 模型才渲染这个框**（dense 模型给一个永远用不上的框，
+    // 只会让人怀疑自己是不是填错了）。判据在 Python 的 is_moe()：arch 带 moe，
+    // 或 gguf 里读到了 expert_count —— 页面只是照 m.moe 显示，不自己猜。
+    + (m.moe ? fl('专家层数（-ncmoe）',
+                  '把前 N 层的专家权重放 CPU · 0 = 全放显存；显存不够时装更大的 MoE 用，代价是慢 · 本例约 '
+                  + (m.experts ? m.experts + ' 个专家' : '未知个数'),
+                  '<input id="ed_ncmoe" type="number" inputmode="numeric" min="0" max="200" value="'
+                  + (m.ncmoe || 0) + '">') : '')
+    + fl('系统提示词', '每个请求自动加在最前面 · 留空 = 不注入',
+         '<textarea id="ed_sys" rows="5" placeholder="例如：必须始终用简体中文回答">'
+         + esc(m.system_prompt || '') + '</textarea>');
+
+}
+
+async function saveEdit(reload){
+  // 挡的是「现在真有引擎占着」——加载/停止进行中，或者有不是管理器起的 llama-server。
+  // 原来这里判的是 phase==='error'：可那个状态是**粘**的（管理器没有巡查线程去清它），
+  // 一次失败之后就一直卡在 error，连重试都被这句拦住，只能重启管理器（2026-09-26 踩过）。
+  const st = lastState;
+  if(reload && st && (st.phase==='loading' || st.phase==='stopping' || (st.external||[]).length)){
+    alert('现在还有引擎在占着显存（正在加载/停止，或有不是管理器启动的 llama-server），已阻止再次加载，避免同时跑两个模型。可以先用「保存」把参数存下来，等状态回到空闲再重载。');
+    return;
+  }
+  const patch = {
+    ctx:    Math.round((parseFloat($('#ed_ctx').value) || 32) * 1024),
+    nmax:   parseInt($('#ed_nmax').value, 10) || 2,
+    pmin:   Math.max(0,Math.min(1,parseFloat($('#ed_pmin').value)||0)),
+    mtp:    $('#ed_mtp').value,
+    kv:     $('#ed_kv').value,
+    template: $('#ed_tpl').value,
+    author: $('#ed_author').value.trim(),
+    extra:  $('#ed_extra').value.trim(),
+    mmproj: $('#ed_mmproj').value.trim(),
+    system_prompt: $('#ed_sys').value.trim(),
+  };
+  // 专家层数**只有 MoE 模型的编辑框里才有那个 input**：dense 模型别往 patch 里塞 0 ——
+  // 那会把 models.json 里手写的值抹掉，而 dense 这条路上用户根本没看到过这个框。
+  const ncmoeEl = $('#ed_ncmoe');
+  if (ncmoeEl) patch.ncmoe = Math.max(0, parseInt(ncmoeEl.value, 10) || 0);
+  try {
+    const r = await api('/api/config', {id: EDIT_ID, patch: patch, reload: !!reload});
+    if (!r.ok){ alert('保存失败：' + (r.error || '未知错误')); return; }
+  } catch(e){
+    alert(e.message === '401' ? 'API key 不对' : '请求失败');
+    return;
+  }
+  const sheet = document.querySelector('#pick .sheet');
+  if (sheet) sheet.classList.remove('editing');
+  $('#pickEdit').style.display = 'none';
+  $('#pickBrowse').style.display = 'block';
+  if (reload){ closeModal('#pick'); }
+  if (reload) tick();
+  else { await tick(); openPick(); }
+}
+
+$('#edCancel').onclick = () => {
+  const sheet=document.querySelector('#pick .sheet');
+  if (sheet) sheet.classList.remove('editing');
+  $('#pickEdit').style.display='none'; $('#pickBrowse').style.display='block';
+};
+$('#edSave').onclick = () => saveEdit(false);
+$('#edSaveReload').onclick = () => saveEdit(true);
+
+async function tick(){
+  if (SHUTTING) return;          // 关机中就别再轮询了，见下面的关机按钮
+  try {
+    const s = await api('/api/state');
+    render(s);
+  } catch(e){
+    if (e.message === '401'){
+      showKeyBox(KEY ? '这个 key 不对，再试一次' : '');
+    } else {
+      setSub('连接不上管理器');
+      if (!document.querySelector('#keybox')){
+        $('#statusCard').innerHTML =
+          '<div class="warn">连不上 ' + esc(location.host) + '<br><br>'
+        + '检查：<br>· 手机和电脑是不是同一个 WiFi<br>'
+        + '· 地址是不是 http:// 开头（不是 https）</div>';
+      }
+    }
+  }
+}
+
+// key 输入界面。
+// 注意：绝对不能在每次轮询失败时重建它 —— tick 每 1.5 秒跑一次，
+// 重建会把用户正在输入的内容清空，表现就是「key 怎么样都输不进去」。
+function showKeyBox(err){
+  setSub('需要 API Key');
+  const box = document.querySelector('#keybox');
+  if (box){                                 // 已经在了就只更新提示，别动输入框
+    const el = document.querySelector('#keyErr');
+    if (el) el.textContent = err || '';
+    return;
+  }
+  $('#statusCard').innerHTML =
+      '<div style="font-weight:600;margin-bottom:8px">输入 API Key</div>'
+    + '<div id="keyErr" class="warn" style="margin:0 0 8px"></div>'
+    + '<input id="keybox" type="text" placeholder="粘贴 API Key"'
+    + ' autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">'
+    + '<div class="row" style="margin-top:12px"><button id="keygo">进入</button></div>'
+    + '<div class="hint">粘整条地址、<code>?k=xxx</code>、或者光一串 key，都认。</div>';
+  document.querySelector('#keygo').onclick = submitKey;
+  const kb = document.querySelector('#keybox');
+  // 手机软键盘的回车不一定报 Enter，所以还留着按钮给点
+  kb.onkeydown = ev => { if (ev.key === 'Enter' || ev.keyCode === 13) submitKey(); };
+  if (err) document.querySelector('#keyErr').textContent = err;
+  try { kb.focus(); } catch(_){}
+}
+
+function submitKey(){
+  let v = (document.querySelector('#keybox').value || '').trim();
+  if (!v) return;
+  const m = v.match(/[?&]k=([^&\s]+)/);      // 整条 URL 粘进来也能用
+  if (m) v = m[1];
+  try { v = decodeURIComponent(v); } catch(_){}
+  KEY = v.trim();
+  localStorage.setItem('llmk', KEY);
+  $('#statusCard').innerHTML = '<div class="sub">正在连接…</div>';
+  tick();
+}
+
+$('#btnPause').onclick = async () => {
+  const s = lastState || {paused:false};
+  await api('/api/pause', {paused: !s.paused}); tick();
+};
+$('#btnRefresh').onclick = async () => { await api('/api/refresh', {}); closeModal('#more'); tick(); };
+$('#btnUnloadSheet').onclick = () => { closeModal('#more'); doUnload(); };
+$('#btnMore').onclick = () => openModal('#more');
+$('#moreClose').onclick = () => closeModal('#more');
+$('#more').onclick = e => { if (e.target.id === 'more') closeModal('#more'); };
+
+// ── 日志两段：默认只显示摘要 ──────────────────────────────────
+// 用户 2026-09-26：「模型加载卸载记录、管理器运行日志在我看的界面只显示简单内容」。
+// 做法 = 最近 10 条 + 每行截到 64 字，长行以省略号收尾，另给一颗「看全文 / 看摘要」。
+//
+// ⚠ **截断必须留展开口子**（ui-ux-pro-max 的 Truncation 规则：省略号 + expand）：
+// 引擎完整命令行、报错原文都在那些几百字的长行里，只截不留口子就再也查不到了 ——
+// 而排查时最需要的就是它。
+// 末段 t/s 不在这套里：它本来就短，而且是管理器生成的（见 build_tps_summary()）。
+const LOG_SUMMARY_LINES = 10;    // 摘要留最新几条
+const LOG_SUMMARY_COLS = 64;     // 摘要每行截到几个字
+const LOG_SECTIONS = [
+  {pre: '#logLoad', btn: '#logLoadMore', full: false},
+  {pre: '#logMgr',  btn: '#logMgrMore',  full: false},
+];
+const LOG_RAW = {};              // 拉回来的原文 —— 切换全文/摘要不用重拉
+
+function clipLine(s){
+  return s.length > LOG_SUMMARY_COLS ? s.slice(0, LOG_SUMMARY_COLS - 1) + '…' : s;
+}
+
+function renderLogs(){
+  LOG_SECTIONS.forEach(sec => {
+    const pre = $(sec.pre), btn = $(sec.btn);
+    if (!pre) return;
+    const raw = LOG_RAW[sec.pre] || '';
+    const lines = raw.split('\n');
+    // 有没有真被截掉东西。没有就别显示那颗按钮（用不上的控件只是噪音）
+    const clipped = lines.length > LOG_SUMMARY_LINES
+                 || lines.some(l => l.length > LOG_SUMMARY_COLS);
+    pre.textContent = (sec.full || !clipped)
+      ? raw
+      : lines.slice(-LOG_SUMMARY_LINES).map(clipLine).join('\n');
+    pre.scrollTop = pre.scrollHeight;      // 最新的在最下面
+    if (btn){
+      btn.style.display = clipped ? '' : 'none';
+      btn.textContent = sec.full ? '看摘要' : '看全文';
+    }
+  });
+}
+
+// 按钮是静态的，绑一次就够 —— 放进 renderLogs 会每轮重绑
+LOG_SECTIONS.forEach(sec => {
+  const b = $(sec.btn);
+  if (b) b.onclick = () => { sec.full = !sec.full; renderLogs(); };
+});
+
+// ── 日志（「更多」的第二层）──
+// **打开时才去拉**，不跟着 tick() 走：日志是拿来翻的，每 1.5 秒重建一次
+// 会把滚动位置弹回顶部（模型列表踩过同一个坑，见 docs\ui.md 第三节）。
+// 用 textContent 而不是 innerHTML —— 日志里有 `<` `&`（引擎命令行、路径），
+// 而且没必要为一份纯文本付 esc() 的钱。
+async function openLogs(focusTps){
+  openModal('#logs');
+  let load = '（读日志失败）', mgr = '';
+  try {
+    const r = await api('/api/logs');
+    load = (r.logs || []).join('\n') || '（还没有记录）';
+    mgr = (r.manager || []).join('\n') || '（读不到 manager.log）';
+  } catch(e){
+    load = e.message === '401' ? 'API key 不对' : '连接不上管理器，检查一下手机和电脑的连接';
+  }
+  LOG_RAW['#logLoad'] = load;
+  LOG_RAW['#logMgr'] = mgr;
+  renderLogs();                    // 两段按各自的「看摘要 / 看全文」状态渲染
+  // 末段**不由页面计算**：管理器自己算好、写进 /api/state 的 tps_summary（同一份文本
+  // 也落在 logs\tps-summary.md）。理由见 model_manager.py 的 build_tps_summary()——
+  // 用户要「程序自动写出结果」，而且页面里算出来的东西 AI 读不到。
+  $('#logTps').textContent = (lastState && lastState.tps_summary) || '（还没有记录 —— 聊一次就有了）';
+  // 拉完滚到底：最新的在最下面，点开就该看见它
+  document.querySelectorAll('#logs pre').forEach(p => { p.scrollTop = p.scrollHeight; });
+  // 从**模型面板**那颗「日志」进来时，把末段 t/s 滚进视野 —— 那颗按钮的用途就是
+  // 换参数前后对速度，末段排在三个 pre 的最后，不滚就得每次手动翻（闪层本身是能滚的）。
+  // 「更多」那条路**不滚**，那边是来翻加载/管理器日志的，位置保持老样子。
+  if (focusTps && $('#logTpsHint') && $('#logTpsHint').scrollIntoView) {
+    $('#logTpsHint').scrollIntoView({block: 'start'});
+  }
+}
+// ⚠ 必须包一层箭头函数：`onclick = openLogs` 会把**点击事件对象**当第一个实参传进去，
+// 而第一个形参现在是 focusTps —— 那样从「更多」进来也会滚到末段。
+$('#btnLogs').onclick = () => openLogs();
+$('#logsClose').onclick = () => closeModal('#logs');
+$('#logs').onclick = e => { if (e.target.id === 'logs') closeModal('#logs'); };
+// 记录：操作槽里那颗（在「更多」左边）。入口换过三次地方 ——
+// 状态卡统计条「记录 ›」→ 更多弹层 → 操作槽，改的时候别只改一处。
+$('#btnPerf').onclick = openPerf;
+$('#perfClose').onclick = () => closeModal('#perf');
+$('#perf').onclick = e => { if (e.target.id === 'perf') closeModal('#perf'); };
+$('#btnTakeover').onclick = async () => {
+  if (!(await ask('接管手动启动的模型？',
+      '会把手动启动的 llama-server 杀掉（正在聊天的对话会中断），然后由管理器接管 8091。',
+      '接管', true))) return;
+  await api('/api/takeover', {}); tick();
+};
+
+// 电源按钮：**睡眠是主路，关机是备选**。
+// 为什么主路是睡眠：真关机 = 下次开机必然停在登录界面，而管理器自启挂在用户登录上
+// → 关机之后没人输 PIN，80/8091 就永远起不来（实测，理由和事件日志见 docs\power.md 第一节）。
+// 睡眠把会话留在内存里，唤醒后管理器原样还在，不用任何人登录。
+//
+// 两个动作都要守住三件事：
+// 1. **不可撤销**：点完之后这台机器就不理你了、手机再也连不上，所以先弹确认框。
+// 2. **点了之后必须停掉轮询**：否则 1.5 秒一次的 tick 会连不上，把页面刷成
+//    「连接不上管理器」+ 一屏排查建议 —— 看着像失败了，其实正睡/正关着。
+// 3. **指令发不出去就别装死**：恢复轮询，让用户能重试。
+let SHUTTING = false;
+let TICKER = 0;
+function stopTick(){ if (TICKER) { clearInterval(TICKER); TICKER = 0; } }
+function startTick(){ if (!TICKER) TICKER = setInterval(tick, 1500); }
+
+// 收尾状态：弹层收掉（挡着状态卡，收起来才看得见「正在睡眠」）、状态卡换成大字提示。
+// 这几步睡眠和关机一模一样，所以单拎出来，关机那边第二步也要用。
+function enterShutting(o){
+  SHUTTING = true;
+  stopTick();
+  closeModal('#more');
+  closeModal('#logs');            // 「更多」那两层（日志 / 记录）也一起收掉
+  closeModal('#perf');
+  closeModal('#ask');
+  setSub(o.sub);
+  $('#statusCard').innerHTML = '<div class="big">' + o.big + '</div>'
+    + '<div class="meta">' + o.meta + '</div>';
+}
+
+// 指令都没发出去就别装死，把页面恢复成能用的样子
+function abortShutting(o, msg){
+  SHUTTING = false;
+  setSub(o.failSub);
+  alert(msg);
+  startTick(); tick();
+}
+
+function apiFailMsg(o, e){
+  return e.message === '401' ? 'API key 不对' : o.failSub + '，检查一下手机和电脑的连接';
+}
+
+// 睡眠。确认走自己的 ask()（**不是原生 confirm**，理由见 HTML 里那段注释）。
+// 参数用对象——七个数位参数排下来已经数不清谁是谁了。
+async function powerAction(o){
+  if (!(await ask(o.title, o.body, o.ok || '确定', true))) return;
+  enterShutting(o);
+  try {
+    await api(o.path, {});
+  } catch(e){
+    abortShutting(o, apiFailMsg(o, e));
+  }
+}
+
+$('#btnSleep').onclick = () => powerAction({
+  path: '/api/sleep',
+  title: '让这台电脑睡眠？',
+  body: '会话和进程原样留在内存里，管理器不会死 —— 唤醒后它立刻就在，'
+      + '不用有人到机器前输 PIN。\n\n'
+      + '注意：睡前会先卸载模型（睡眠会让 CUDA 上下文失效），'
+      + '唤醒后第一次请求要重新载入（10~15 秒）。',
+  ok: '睡眠',
+  sub: '电脑正在睡眠…',
+  big: '正在睡眠',
+  meta: '电脑马上进入睡眠，这个页面之后连不上是正常的。唤醒电脑后刷新本页即可。',
+  failSub: '睡眠指令没发出去',
+});
+
+// 「完全关机」是**两步**的（2026-09-21 用户定的）。
+// 第一发 POST /api/shutdown **不带 force，服务端只探测、不关机** ——
+// 有程序注册了关机阻断就把名字报回来（本机是 Cherry Studio），
+// 让人先看清是谁挡着，再点第二颗「强制关机」走 force。
+// 没有阻断者时第一发就把机器关了，不会多问一遍。
+//
+// 为什么非这样不可：Windows 收到关机请求后，**有程序调用过
+// ShutdownBlockReasonCreate() 就会停在「这些应用阻止关机」那一页等人点**，
+// 而「完全关机」这功能存在的意义恰恰是人不在机器前 —— 于是永远关不掉。
+// 实测经过、事件日志证据 → model_manager.py 的 shutdown_blockers()。
+const SHUT_OPTS = {
+  title: '完全关掉这台电脑？',
+  body: '关机之后必须有人到机器前输 PIN 才能进系统，而管理器挂在登录上，'
+      + '所以 80 / 8091 不会再自己起来 —— 手机就没法用了。\n\n'
+      + '想远程继续用请改点「睡眠」。',
+  ok: '关机',
+  sub: '电脑正在关机…',
+  big: '正在关机',
+  meta: '电脑马上就会关闭。这个页面之后连不上是正常的，不用管它。',
+  failSub: '关机指令没发出去',
+};
+
+$('#btnShutdown').onclick = async () => {
+  const o = SHUT_OPTS;
+  if (!(await ask(o.title, o.body, o.ok, true))) return;
+
+  let r;
+  try {
+    r = await api('/api/shutdown', {});       // 第一发：只探测
+  } catch(e){
+    abortShutting(o, apiFailMsg(o, e));
+    return;
+  }
+  if (!(r && r.blocked)){
+    enterShutting(o);                          // 没人挡着，服务端已经在关了
+    return;
+  }
+
+  // 被挡住了。把「谁、为什么」原样摊给用户看 —— 名字和原因串都是系统给的，别翻译。
+  const who = (r.blockers || []).map(b =>
+      '· ' + (b.name || ('PID ' + b.pid)) + (b.reason ? '：' + b.reason : '')).join('\n');
+  closeModal('#more');
+  if (!(await ask('有程序挡着关机',
+      '这些程序向 Windows 注册了「关机阻断」，不强制的话系统会停在\n'
+    + '「这些应用阻止关机」那一页等人点「仍要关机」——\n'
+    + '人在手机上时没人点，机器就永远关不掉。\n\n'
+    + who + '\n\n'
+    + '强制关机 = 硬结束它们，没保存的东西会丢。要强制关掉这台电脑吗？',
+      '强制关机', true))) return;
+
+  enterShutting(o);
+  try {
+    await api('/api/shutdown', {force: true});
+  } catch(e){
+    abortShutting(o, apiFailMsg(o, e));
+  }
+};
+
+// 重启管理器。跟睡眠/关机**不是一类**：那两个是把机器弄下线、不会自己回来，
+// 所以走 enterShutting() 装死；这个几秒后自己就回来了，得自己维护一个探测循环
+// （enterShutting 会 stopTick，且没有任何回滚路径，套上去页面就永远停在「正在重启」）。
+//
+// 服务端先替你拦一道：正在生成回复、或正在切换模型时回 409。点这颗按钮的意图
+// 通常是「让新配置生效」，不是「砍掉我正在等的回复」。
+let REBOOT_PROBE = null;
+$('#btnRestart').onclick = async () => {
+  if (!(await ask('重启管理器？',
+      '改了 config.json 或 model_manager.py 之后，要重启才生效。\n\n'
+    + '只断几秒：新进程启动时会自动认领正在跑的模型，不用重新加载。\n\n'
+    + '引擎正在生成回复时管理器会拒绝这次重启 —— 等那条出完再点。',
+      '重启'))) return;
+  closeModal('#more');
+
+  let r;
+  try {
+    r = await api('/api/restart', {});
+  } catch(e){
+    alert('重启指令没发出去：' + (e.message || e));
+    return;
+  }
+  if (!r || !r.ok){ alert((r && r.message) || '重启失败'); return; }
+
+  // 服务端答应了，接下来它随时会断。改成每秒探一次，连上就整页重载 ——
+  // 重载是为了拿到新的 UI_VER（重启往往正是因为换了新代码）。
+  stopTick();
+  setSub('正在重启管理器…');
+  let n = 0;
+  REBOOT_PROBE = setInterval(async () => {
+    n++;
+    try {
+      await api('/api/state');
+      clearInterval(REBOOT_PROBE); REBOOT_PROBE = null;
+      location.reload();
+      return;
+    } catch(e){
+      if (e.message === '401'){
+        // 服务其实已经回来了，只是 key 变了（多半是刚改过 config.json 的 api_key）
+        // —— 重载让页面重新问一次 key，别在这儿干等 45 秒。
+        clearInterval(REBOOT_PROBE); REBOOT_PROBE = null;
+        location.reload();
+        return;
+      }
+      // 还没起来，继续等
+    }
+    if (n >= 45){          // 45 秒还不回来就别再装作在重启了，交回给正常的轮询
+      clearInterval(REBOOT_PROBE); REBOOT_PROBE = null;
+      setSub('重启后连不上，去电脑上看一眼');
+      startTick(); tick();
+    }
+  }, 1000);
+};
+
+$('#ver').textContent = 'v' + UI_VER;
+$('#ep').textContent = location.origin + '/v1';
+$('#ctl').textContent = location.origin + '/';
+// **写完整，不截断**（用户 2026-09-21 要求）—— 原来只给前 12 位 + …，
+// 而这一行就是手机上唯一能拿到 key 的地方（别的都在这台电脑的配置文件里）。
+$('#apikey').textContent = KEY || '（未设置）';
+
+// ── 聚焦输入框期间锁住缩放（「点输入框整页放大」的第三道保险）─────────────
+// 前两道在 CSS 里：表单字号 17px、html 上 touch-action:manipulation。
+// 这道管的是 iOS 在**聚焦那一刻**自己缩一次视口的行为：
+// 聚焦期间把 viewport 的 maximum-scale 临时改成 1，失焦立刻还原。
+// 只在打字那几秒禁掉双指缩放，平时照样能捏合，不牺牲可访问性。
+//
+// 为什么非改 meta 不可：visualViewport.scale 是只读的，掰不回去；
+// 改 viewport meta 是唯一能让 Safari 重新算一次缩放的手段。
+const VP = document.querySelector('meta[name=viewport]');
+const VP_BASE = VP ? VP.getAttribute('content') : '';
+const VP_LOCK = 'width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover';
+let vpLocked = false;
+
+function isField(el){
+  return !!(el && el.tagName && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName));
+}
+function lockZoom(on){
+  if (!VP || !VP.setAttribute || vpLocked === on) return;
+  vpLocked = on;
+  VP.setAttribute('content', on ? VP_LOCK : VP_BASE);
+}
+// ⚠ 假 DOM 测试里的 document / window 是**光秃秃的对象**，没有 addEventListener ——
+// 直接调会 TypeError，三个测试一起红。所以统一从这个口子挂。
+function on(target, ev, fn){
+  if (target && typeof target.addEventListener === 'function') target.addEventListener(ev, fn);
+}
+// focusin / focusout 会冒泡（focus / blur 不会），挂 document 一个就够
+on(document, 'focusin',  e => { if (isField(e.target)) lockZoom(true); });
+// focusout 触发时 activeElement 还是旧那个，得等一拍再判断
+on(document, 'focusout', () => setTimeout(() => {
+  if (!isField(document.activeElement)) lockZoom(false);
+}, 0));
+// 兜底：切走 / 切后台时可能收不到 focusout，别把锁留在那儿
+on(window, 'blur', () => lockZoom(false));
+on(document, 'visibilitychange', () => { if (document.hidden) lockZoom(false); });
+
+// 脚本一报错就把信息顶到标题下面 —— 不然页面上出问题只能靠猜
+window.onerror = function(msg, src, line){
+  setSub('⚠ 页面脚本出错：' + msg + '（行 ' + line + '）');
+  return false;
+};
+
+tick();
+startTick();
+</script>
+</body>
+</html>
